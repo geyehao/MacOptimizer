@@ -66,7 +66,7 @@ struct GradientStyles {
     )
     
     static let trash = LinearGradient(
-        colors: [Color(red: 0.7, green: 0.1, blue: 0.1), Color(red: 0.4, green: 0.0, blue: 0.0)],
+        colors: [Color(red: 0.0, green: 0.8, blue: 0.7), Color(red: 0.0, green: 0.4, blue: 0.5)],
         startPoint: .topLeading,
         endPoint: .bottomTrailing
     )
@@ -92,11 +92,11 @@ struct GradientStyles {
         endPoint: .bottomTrailing
     )
     
-    // 9. 恶意软件扫描 (红色警告)
+    // 9. 隐私保护 (粉紫渐变 - 匹配设计图)
     static let privacy = LinearGradient(
         gradient: Gradient(colors: [
-            Color(red: 0.2, green: 0.0, blue: 0.0),
-            Color(red: 0.1, green: 0.0, blue: 0.0)
+            Color(red: 0.85, green: 0.45, blue: 0.65), // 粉色
+            Color(red: 0.65, green: 0.25, blue: 0.55)  // 紫色
         ]),
         startPoint: .topLeading,
         endPoint: .bottomTrailing
@@ -168,11 +168,11 @@ struct BackgroundStyles {
         endPoint: .bottomTrailing
     )
     
-    // 5. 废纸篓 (红色 - 删除/清理)
+    // 5. 废纸篓 (青绿色 - 清新/整理) - 匹配设计图
     static let trash = LinearGradient(
         stops: [
-            .init(color: Color(red: 0.7, green: 0.1, blue: 0.1), location: 0.0),
-            .init(color: Color(red: 0.4, green: 0.0, blue: 0.0), location: 1.0)
+            .init(color: Color(red: 0.0, green: 0.8, blue: 0.7), location: 0.0), // 青绿
+            .init(color: Color(red: 0.0, green: 0.4, blue: 0.5), location: 1.0)  // 深青
         ],
         startPoint: .topLeading,
         endPoint: .bottomTrailing
@@ -207,11 +207,11 @@ struct BackgroundStyles {
         endPoint: .bottomTrailing
     )
     
-    // 8. 恶意软件扫描 (深红色警告)
+    // 8. 隐私保护 (粉紫渐变 - 匹配设计图)
     static let privacy = LinearGradient(
         stops: [
-            .init(color: Color(red: 0.4, green: 0.0, blue: 0.0), location: 0.0),
-            .init(color: Color(red: 0.2, green: 0.0, blue: 0.0), location: 1.0)
+            .init(color: Color(red: 0.85, green: 0.45, blue: 0.65), location: 0.0), // 粉色
+            .init(color: Color(red: 0.45, green: 0.2, blue: 0.45), location: 1.0)  // 深紫
         ],
         startPoint: .topLeading,
         endPoint: .bottomTrailing

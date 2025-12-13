@@ -172,7 +172,11 @@ class LocalizationManager: ObservableObject {
         
         // 废纸篓
         "trash_empty": [.chinese: "废纸篓为空", .english: "Trash is Empty"],
-        "empty_trash": [.chinese: "清空废纸篓", .english: "Empty Trash"],
+        "empty_trash": [.chinese: "清倒", .english: "Empty"],
+        "smart_select": [.chinese: "智能选择", .english: "Smart Select"],
+        "including": [.chinese: "包括", .english: "Including"],
+        "trash_on_mac": [.chinese: "mac 上的废纸篓", .english: "Trash on Mac"],
+        "view_items": [.chinese: "查看项目", .english: "View Items"],
         
         // 确认对话框
         "confirm_delete": [.chinese: "确认删除", .english: "Confirm Delete"],

@@ -1,5 +1,14 @@
 import SwiftUI
 
+// MARK: - 扫描状态
+enum TrashScanState {
+    case initial    // 初始页面
+    case scanning   // 扫描中
+    case completed  // 扫描完成（结果页）
+    case cleaning   // 清理中
+    case finished   // 清理完成
+}
+
 struct TrashItem: Identifiable {
     let id = UUID()
     let url: URL
@@ -27,8 +36,21 @@ class TrashScanner: ObservableObject {
     @Published var totalSize: Int64 = 0
     @Published var needsPermission = false
     
+    // 新增属性
+    @Published var scannedItemCount: Int = 0
+    @Published var isStopped = false
+    @Published var currentScanPath: String = ""
+    @Published var isCleaning = false // 其实可以通过 scanState 控制，但为了保持逻辑一致性保留
+    @Published var cleanedCount: Int = 0
+    @Published var cleanedSize: Int64 = 0
+    
     private let fileManager = FileManager.default
-    private let trashURL: URL
+    let trashURL: URL
+    private var shouldStop = false
+    
+    var formattedTotalSize: String {
+        ByteCountFormatter.string(fromByteCount: totalSize, countStyle: .file)
+    }
     
     init() {
         // 使用系统 API 获取正确的废纸篓路径
@@ -40,11 +62,21 @@ class TrashScanner: ObservableObject {
         }
     }
     
+    func stopScan() {
+        shouldStop = true
+        isScanning = false
+        isStopped = true
+        // 停止后不需要清空 items，保留已扫描到的
+    }
+    
     func scan() async {
         await MainActor.run {
             isScanning = true
+            isStopped = false
+            shouldStop = false
             items = []
             totalSize = 0
+            scannedItemCount = 0
             needsPermission = false
         }
         
@@ -53,11 +85,18 @@ class TrashScanner: ObservableObject {
         
         // 首先尝试直接访问 (需要 Full Disk Access)
         var hasAccess = false
+        
+        // 简单模拟一下扫描过程中的路径变化，提升用户体验
+        await MainActor.run { self.currentScanPath = "Preparing..." }
+        try? await Task.sleep(nanoseconds: 500_000_000) // 0.5s pre-delay
+        
         do {
             let contents = try fileManager.contentsOfDirectory(at: trashURL, includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey, .isDirectoryKey])
             hasAccess = true
             
             for fileURL in contents {
+                if shouldStop { break }
+                
                 let size = calculateSize(at: fileURL)
                 let resourceValues = try? fileURL.resourceValues(forKeys: [.contentModificationDateKey, .isDirectoryKey])
                 let date = resourceValues?.contentModificationDate
@@ -72,13 +111,23 @@ class TrashScanner: ObservableObject {
                 )
                 scannedItems.append(item)
                 total += size
+                
+                await MainActor.run {
+                    self.scannedItemCount += 1
+                    self.currentScanPath = fileURL.path
+                }
+                
+                // 稍微延时以便用户看清扫描过程 (对于文件少的情况)
+                if contents.count < 50 {
+                   try? await Task.sleep(nanoseconds: 50_000_000) // 0.05s
+                }
             }
         } catch {
             print("Direct access failed: \(error)")
         }
         
         // 如果直接访问失败，尝试使用 shell 命令
-        if !hasAccess {
+        if !hasAccess && !shouldStop {
             let result = await scanWithShell()
             scannedItems = result.items
             total = result.total
@@ -98,6 +147,7 @@ class TrashScanner: ObservableObject {
             self.items = sortedItems
             self.totalSize = finalTotal
             self.isScanning = false
+            self.scannedItemCount = sortedItems.count
         }
     }
     
@@ -208,6 +258,7 @@ class TrashScanner: ObservableObject {
             if let output = String(data: data, encoding: .utf8) {
                 let lines = output.components(separatedBy: "\n")
                 for line in lines {
+                    if shouldStop { break }
                     guard !line.isEmpty else { continue }
                     
                     let parts = line.components(separatedBy: "|||")
@@ -233,6 +284,11 @@ class TrashScanner: ObservableObject {
                     )
                     scannedItems.append(item)
                     total += size
+                    
+                    await MainActor.run {
+                        self.scannedItemCount += 1
+                        self.currentScanPath = path
+                    }
                 }
             }
         } catch {
@@ -243,12 +299,24 @@ class TrashScanner: ObservableObject {
     }
     
     func emptyTrash() async -> Int64 {
+        await MainActor.run {
+            self.isCleaning = true
+            self.cleanedCount = 0
+            self.cleanedSize = 0
+        }
+        
         var removedSize: Int64 = 0
         
         for item in items {
             do {
                 try fileManager.removeItem(at: item.url)
                 removedSize += item.size
+                await MainActor.run {
+                    self.cleanedCount += 1
+                    self.cleanedSize += item.size
+                }
+                // 模拟一点延迟，让用户看到清理过程
+                try? await Task.sleep(nanoseconds: 100_000_000)
             } catch {
                 print("Failed to delete \(item.url.path): \(error)")
             }
@@ -257,10 +325,25 @@ class TrashScanner: ObservableObject {
         await MainActor.run {
             items.removeAll()
             totalSize = 0
+            self.isCleaning = false
             DiskSpaceManager.shared.updateDiskSpace()
+            self.scannedItemCount = 0 // Reset count for finish page
         }
         
         return removedSize
+    }
+    
+    func reset() {
+        items = []
+        isScanning = false
+        totalSize = 0
+        needsPermission = false
+        scannedItemCount = 0
+        isStopped = false
+        currentScanPath = ""
+        isCleaning = false
+        cleanedCount = 0
+        cleanedSize = 0
     }
     
     private func calculateSize(at url: URL) -> Int64 {
@@ -291,28 +374,46 @@ struct TrashView: View {
     @StateObject private var scanner = TrashScanner()
     @ObservedObject private var loc = LocalizationManager.shared
     @State private var showEmptyConfirmation = false
+    @State private var showCleaningFinished = false
+    
+    // 视图状态 (对应 ScanState)
+    private var scanState: TrashScanState {
+        if showCleaningFinished {
+            return .finished
+        } else if scanner.isCleaning {
+            return .cleaning
+        } else if scanner.isScanning {
+            return .scanning
+        } else if !scanner.items.isEmpty || scanner.isStopped {
+            // 如果已经被停止，也显示结果页（可能是部分结果）
+            return .completed
+        }
+        return .initial
+    }
     
     var body: some View {
         NavigationStack {
             ZStack {
-                mainContent
-                
-                // Floating Button
-                if !scanner.items.isEmpty {
-                    VStack {
-                        Spacer()
-                        emptyButton
-                            .padding(.bottom, 10)
-                    }
+                switch scanState {
+                case .initial:
+                    initialPage
+                case .scanning:
+                    scanningPage
+                case .completed:
+                    resultsPage
+                case .cleaning:
+                    cleaningPage
+                case .finished:
+                    finishedPage
                 }
             }
         }
-        .onAppear {
-            Task { await scanner.scan() }
-        }
         .confirmationDialog(loc.L("empty_trash"), isPresented: $showEmptyConfirmation) {
             Button(loc.L("empty_trash"), role: .destructive) {
-                Task { await scanner.emptyTrash() }
+                Task {
+                    await scanner.emptyTrash()
+                    showCleaningFinished = true
+                }
             }
             Button(loc.L("cancel"), role: .cancel) {}
         } message: {
@@ -320,252 +421,391 @@ struct TrashView: View {
         }
     }
     
-    @ViewBuilder
-    private var mainContent: some View {
+    // MARK: - 1. 初始页面
+    private var initialPage: some View {
         VStack(spacing: 0) {
-            headerView
-            
-            DiskUsageView()
-                .padding(.horizontal, 24)
-                .padding(.bottom, 16)
-            
-            if scanner.isScanning {
-                scanningView
-            } else if scanner.needsPermission {
-                permissionView
-            } else if scanner.items.isEmpty {
-                emptyStateView
-            } else {
-                itemListView
-            }
-        }
-    }
-    
-    private var scanningView: some View {
-        VStack {
-            Spacer()
-            ProgressView().scaleEffect(0.8)
-            Text(loc.currentLanguage == .chinese ? "正在扫描废纸篓..." : "Scanning Trash...")
-                .foregroundColor(.secondaryText)
-                .padding(.top, 8)
-            Spacer()
-        }
-    }
-    
-    private var permissionView: some View {
-        VStack {
-            Spacer()
-            VStack(spacing: 20) {
-                Image(systemName: "lock.shield")
-                    .font(.system(size: 64))
-                    .foregroundColor(.orange.opacity(0.6))
-                Text(loc.currentLanguage == .chinese ? "需要访问权限" : "Permission Required")
-                    .font(.title2)
-                    .fontWeight(.semibold)
-                    .foregroundColor(.white.opacity(0.9))
-                Text(loc.currentLanguage == .chinese ? "查看废纸篓内容需要「完全磁盘访问权限」" : "Full Disk Access is required to view Trash contents")
-                    .font(.subheadline)
-                    .foregroundColor(.tertiaryText)
-                    .multilineTextAlignment(.center)
-                
-                Button(action: { scanner.openSystemPreferences() }) {
-                    HStack {
-                        Image(systemName: "gearshape")
-                        Text(loc.currentLanguage == .chinese ? "授权访问" : "Grant Access")
-                    }
-                    .padding(.horizontal, 24)
-                    .padding(.vertical, 12)
-                    .background(Color.orange.opacity(0.8))
-                    .foregroundColor(.white)
-                    .cornerRadius(10)
-                }
-                .buttonStyle(.plain)
-                .padding(.top, 8)
-                
-                Text(loc.currentLanguage == .chinese ? "授权后点击「刷新」按钮" : "Click Refresh after granting access")
-                    .font(.caption)
-                    .foregroundColor(.tertiaryText)
-            }
-            .padding()
-            Spacer()
-        }
-    }
-    
-    private var emptyStateView: some View {
-        VStack {
-            Spacer()
-            VStack(spacing: 16) {
-                Image(systemName: "trash")
-                    .font(.system(size: 64))
-                    .foregroundColor(.white.opacity(0.2))
-                Text(loc.L("trash_empty"))
-                    .font(.title2)
-                    .foregroundColor(.white.opacity(0.5))
-                Text(loc.currentLanguage == .chinese ? "已删除的文件会显示在这里" : "Deleted files will appear here")
-                    .font(.subheadline)
-                    .foregroundColor(.tertiaryText)
-            }
-            Spacer()
-        }
-    }
-    
-    private var itemListView: some View {
-        List {
-            ForEach(scanner.items) { item in
-                itemRow(for: item)
-                    .listRowInsets(EdgeInsets(top: 4, leading: 24, bottom: 4, trailing: 24))
-                    .listRowBackground(Color.clear)
-                    .listRowSeparator(.hidden)
-            }
-            
-            Color.clear.frame(height: 150)
-                .listRowBackground(Color.clear)
-                .listRowSeparator(.hidden)
-        }
-        .listStyle(.plain)
-        .scrollContentBackground(.hidden)
-    }
-    
-    @ViewBuilder
-    private func itemRow(for item: TrashItem) -> some View {
-        Group {
-            if item.isDirectory {
-                NavigationLink(destination: TrashDirectoryView(url: item.url)) {
-                    TrashItemRow(item: item)
-                }
-            } else {
-                TrashItemRow(item: item)
-            }
-        }
-        .contextMenu {
-            Button {
-                scanner.putBack(item)
-            } label: {
-                Label(loc.currentLanguage == .chinese ? "放回原处" : "Put Back", systemImage: "arrow.uturn.backward")
-            }
-            
-            Button {
-                NSWorkspace.shared.activateFileViewerSelecting([item.url])
-            } label: {
-                Label(loc.L("show_in_finder"), systemImage: "folder")
-            }
-            
-            Divider()
-            
-            Button(role: .destructive) {
-                try? FileManager.default.removeItem(at: item.url)
-                Task { await scanner.scan() }
-            } label: {
-                Label(loc.currentLanguage == .chinese ? "立即删除" : "Delete Immediately", systemImage: "trash")
-            }
-        }
-    }
-    
-    private var headerView: some View {
-        HStack {
-            VStack(alignment: .leading) {
-                Text(loc.L("trash"))
-                    .font(.largeTitle)
-                    .bold()
-                    .foregroundColor(.white)
-                Text(loc.currentLanguage == .chinese ? "查看并管理已删除的文件" : "View and manage deleted files")
-                    .foregroundColor(.white.opacity(0.7))
-            }
-            
             Spacer()
             
-            Button(action: { Task { await scanner.scan() } }) {
-                HStack(spacing: 6) {
-                    Image(systemName: "arrow.clockwise")
-                    Text(loc.L("refresh"))
-                }
-                .font(.caption)
-                .foregroundColor(.secondaryText)
-                .padding(8)
-                .background(Color.white.opacity(0.05))
-                .cornerRadius(8)
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(24)
-        // 隐藏主视图的默认导航栏，保留自定义 Header
-        #if os(macOS)
-        .toolbar(.hidden, for: .windowToolbar)
-        #endif
-    }
-    
-    // MARK: - 清空按钮 (大圆圈)
-    private var emptyButton: some View {
-        Button(action: { showEmptyConfirmation = true }) {
+            // 图标 (绿色圆形背景)
             ZStack {
-                // 外圈光晕
                 Circle()
-                    .fill(
-                        RadialGradient(
-                            colors: [Color(red: 0.7, green: 0.1, blue: 0.1).opacity(0.3), Color.clear],
-                            center: .center,
-                            startRadius: 40,
-                            endRadius: 70
-                        )
-                    )
-                    .frame(width: 140, height: 140)
+                    // 使用 Styles.swift 中更新后的青绿色渐变
+                    .fill(GradientStyles.trash.opacity(0.8))
+                    .frame(width: 180, height: 180)
+                    .shadow(color: Color(red: 0.0, green: 0.8, blue: 0.7).opacity(0.3), radius: 20, x: 0, y: 10)
                 
-                // 主圆圈
+                Image(systemName: "trash")
+                    .font(.system(size: 80))
+                    .foregroundColor(.white)
+            }
+            .padding(.bottom, 40)
+            
+            // 标题
+            Text(loc.L("trash"))
+                .font(.system(size: 28, weight: .semibold))
+                .foregroundColor(.white)
+                .padding(.bottom, 12)
+            
+            // 描述
+            Text(loc.currentLanguage == .chinese ? "强力清理 Mac 上所有垃圾，包括邮件和照片图库垃圾。" : "Force empty Trash on Mac, including Mail and Photos trash.")
+                .font(.body)
+                .foregroundColor(.secondaryText)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 40)
+                .padding(.bottom, 60)
+            
+            // 功能列表 (Stack 布局)
+            VStack(alignment: .leading, spacing: 20) {
+                featureRow(icon: "trash.fill", title: loc.currentLanguage == .chinese ? "立即清理所有垃圾" : "Empty Trash immediately", subtitle: loc.currentLanguage == .chinese ? "无需浏览所有文件或文件夹它们的原始位置。" : "No need to browse files or their locations.")
+                
+                featureRow(icon: "lock.open.fill", title: loc.currentLanguage == .chinese ? "避免各种“访达”错误" : "Avoid Finder errors", subtitle: loc.currentLanguage == .chinese ? "确保能删除您的废纸篓，不管是否有任何问题。" : "Ensures your Trash is emptied despite any issues.")
+            }
+            .padding(.horizontal, 60)
+            .padding(.bottom, 60)
+            
+            Spacer()
+            
+            // 扫描按钮
+            CircularActionButton(
+                title: loc.currentLanguage == .chinese ? "扫描" : "Scan",
+                gradient: CircularActionButton.blueGradient,
+                action: {
+                    Task { await scanner.scan() }
+                }
+            )
+            .padding(.bottom, 60)
+        }
+    }
+    
+    private func featureRow(icon: String, title: String, subtitle: String) -> some View {
+        HStack(alignment: .top, spacing: 16) {
+            Image(systemName: icon)
+                .font(.system(size: 24))
+                .foregroundColor(.white.opacity(0.8))
+                .frame(width: 32)
+            
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.headline)
+                    .foregroundColor(.white)
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundColor(.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+    
+    // MARK: - 2. 扫描中页面
+    private var scanningPage: some View {
+        VStack(spacing: 0) {
+            // 顶部标题
+            HStack {
+                Text(loc.L("trash"))
+                    .font(.title2)
+                    .foregroundColor(.white)
+            }
+            .padding(.top, 20)
+            
+            Spacer()
+            
+            // 中心动画图标
+            ZStack {
                 Circle()
                     .fill(GradientStyles.trash)
-                    .frame(width: 90, height: 90)
-                    .shadow(color: Color(red: 0.7, green: 0.1, blue: 0.1).opacity(0.5), radius: 15, x: 0, y: 8)
+                    .frame(width: 140, height: 140)
+                    .shadow(color: Color(red: 0.0, green: 0.8, blue: 0.7).opacity(0.3), radius: 20, x: 0, y: 10)
                 
-                // 内容
-                VStack(spacing: 2) {
-                    Image(systemName: "trash.slash.fill")
-                        .font(.system(size: 24))
-                        .foregroundColor(.white)
-                    Text(loc.L("empty_trash"))
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundColor(.white)
-                    Text(ByteCountFormatter.string(fromByteCount: scanner.totalSize, countStyle: .file))
-                        .font(.system(size: 10))
-                        .foregroundColor(.white.opacity(0.9))
+                Image(systemName: "trash")
+                    .font(.system(size: 60))
+                    .foregroundColor(.white)
+            }
+            .padding(.bottom, 40)
+            
+            // 状态文字
+            Text(loc.currentLanguage == .chinese ? "正在计算废纸篓文件夹的大小..." : "Calculating Trash size...")
+                .font(.title3)
+                .foregroundColor(.white)
+                .padding(.bottom, 8)
+            
+            Text(loc.currentLanguage == .chinese ? "系统废纸篓" : "System Trash")
+                .font(.caption)
+                .foregroundColor(.secondaryText)
+                .padding(.bottom, 40)
+            
+            Spacer()
+            
+            // 停止按钮 (显示计数)
+            CircularActionButton(
+                title: loc.currentLanguage == .chinese ? "停止" : "Stop",
+                gradient: CircularActionButton.stopGradient,
+                progress: 0.5, // 模拟进度，或者 infinite
+                showProgress: true,
+                scanSize: "\(scanner.scannedItemCount)", // 显示已扫描数量
+                action: {
+                    scanner.stopScan()
+                }
+            )
+            .padding(.bottom, 60)
+        }
+    }
+    
+    // MARK: - 3. 扫描结果页面
+    private var resultsPage: some View {
+        VStack(spacing: 0) {
+            // 顶部导航
+            HStack {
+                Button(action: {
+                    scanner.reset()
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "chevron.left")
+                        Text(loc.currentLanguage == .chinese ? "重新开始" : "Start Over")
+                    }
+                    .foregroundColor(.secondaryText)
+                }
+                .buttonStyle(.plain)
+                
+                Spacer()
+                
+                Text(loc.L("trash"))
+                    .font(.title2)
+                    .foregroundColor(.white)
+                
+                Spacer()
+                
+                // 占位
+                HStack(spacing: 4) {
+                    Text(loc.currentLanguage == .chinese ? "重新开始" : "Start Over")
+                        .opacity(0)
+                        .accessibilityHidden(true)
                 }
             }
-        }
-        .buttonStyle(.plain)
-    }
-}
-
-struct TrashItemRow: View {
-    let item: TrashItem
-    
-    var body: some View {
-        HStack(spacing: 12) {
-            Image(nsImage: NSWorkspace.shared.icon(forFile: item.url.path))
-                .resizable()
-                .frame(width: 32, height: 32)
+            .padding(.horizontal, 24)
+            .padding(.top, 20)
             
-            VStack(alignment: .leading, spacing: 2) {
-                Text(item.name)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(.primaryText)
-                    .lineLimit(1)
+            Spacer()
+            
+            HStack(spacing: 40) {
+                // 左侧大图标
+                ZStack {
+                    Circle()
+                        .fill(GradientStyles.trash)
+                        .frame(width: 200, height: 200)
+                        .shadow(color: Color(red: 0.0, green: 0.8, blue: 0.7).opacity(0.4), radius: 20, x: 0, y: 10)
+                    
+                    Image(systemName: "trash")
+                        .font(.system(size: 80))
+                        .foregroundColor(.white)
+                        // Trash contents visualization (simple dots)
+                        .overlay(
+                            VStack(spacing: 6) {
+                                HStack(spacing: 6) { Circle().frame(width: 6); Circle().frame(width: 6); Circle().frame(width: 6) }
+                                HStack(spacing: 6) { Circle().frame(width: 6); Circle().frame(width: 6); Circle().frame(width: 6) }
+                                HStack(spacing: 6) { Circle().frame(width: 6); Circle().frame(width: 6); Circle().frame(width: 6) }
+                            }
+                            .foregroundColor(.white.opacity(0.5))
+                            .offset(y: 10)
+                        )
+                }
                 
-                Text("删除于 \(item.formattedDate)")
-                    .font(.system(size: 11))
-                    .foregroundColor(.tertiaryText)
+                // 右侧信息
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(loc.currentLanguage == .chinese ? "扫描完毕" : "Scan Complete")
+                        .font(.title)
+                        .bold()
+                        .foregroundColor(.white)
+                    
+                    HStack(alignment: .firstTextBaseline, spacing: 10) {
+                        Text(scanner.formattedTotalSize)
+                            .font(.system(size: 48, weight: .light))
+                            .foregroundColor(.white) // Cyan color usually, but keeping white for now matching image text style mostly
+                        
+                        Text(loc.L("smart_select"))
+                            .font(.caption)
+                            .foregroundColor(.secondaryText)
+                    }
+                    
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(loc.L("including"))
+                            .font(.caption)
+                            .foregroundColor(.secondaryText)
+                        
+                        HStack(spacing: 6) {
+                            Circle()
+                                .fill(Color.secondaryText)
+                                .frame(width: 4, height: 4)
+                            Text(loc.L("trash_on_mac"))
+                                .font(.body)
+                                .foregroundColor(.secondaryText)
+                        }
+                    }
+                    .padding(.top, 10)
+                    
+                    // 查看项目按钮
+                    NavigationLink(destination: TrashDetailsSplitView(scanner: scanner)) {
+                        HStack {
+                            Text(loc.L("view_items"))
+                            Text(loc.currentLanguage == .chinese ? "共发现 \(scanner.formattedTotalSize)" : "Found \(scanner.formattedTotalSize)")
+                                .foregroundColor(.secondaryText)
+                        }
+                        .padding(.vertical, 8)
+                        .padding(.horizontal, 16)
+                        .background(Color.white.opacity(0.1))
+                        .cornerRadius(6)
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.top, 20)
+                }
             }
             
             Spacer()
             
-            Text(item.formattedSize)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(.secondaryText)
+            // 清理按钮
+             CircularActionButton(
+                 title: loc.L("empty_trash"),
+                 gradient: CircularActionButton.blueGradient,
+                 action: {
+                     if scanner.items.isEmpty {
+                         scanner.reset()
+                     } else {
+                         // 确认删除? 用户想跟图一样，图中有个大按钮在下面
+                         showEmptyConfirmation = true
+                     }
+                 }
+             )
+             .padding(.bottom, 60)
         }
-        .padding(12)
-        .background(Color.white.opacity(0.05))
-        .cornerRadius(10)
+    }
+    
+    // MARK: - 4. 清理中页面
+    private var cleaningPage: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text(loc.L("trash"))
+                    .font(.title2)
+                    .foregroundColor(.white)
+            }
+            .padding(.top, 20)
+            
+            Spacer()
+            
+            ZStack {
+                Circle()
+                    .fill(GradientStyles.trash.opacity(0.8))
+                    .frame(width: 140, height: 140)
+                
+                if #available(macOS 14.0, *) {
+                    Image(systemName: "trash")
+                        .font(.system(size: 60))
+                        .foregroundColor(.white)
+                        .symbolEffect(.bounce, value: scanner.cleanedCount)
+                } else {
+                    Image(systemName: "trash")
+                        .font(.system(size: 60))
+                        .foregroundColor(.white)
+                }
+                
+                // 旋转圈
+                Circle()
+                    .trim(from: 0, to: 0.7)
+                    .stroke(Color.white, lineWidth: 4)
+                    .frame(width: 140, height: 140)
+                    .rotationEffect(.degrees(Double(scanner.cleanedCount * 20))) // 简单旋转
+            }
+            .padding(.bottom, 40)
+            
+            Text(loc.currentLanguage == .chinese ? "正在清理..." : "Cleaning...")
+                .font(.title3)
+                .foregroundColor(.white)
+            
+            Text(loc.currentLanguage == .chinese ? "已清理: \(scanner.cleanedCount) 个文件" : "Cleaned: \(scanner.cleanedCount) items")
+                .foregroundColor(.secondaryText)
+                .padding(.top, 8)
+            
+            Spacer()
+            
+            // 占位按钮
+             CircularActionButton(
+                 title: loc.currentLanguage == .chinese ? "清理中" : "Cleaning",
+                 gradient: CircularActionButton.grayGradient,
+                 action: {}
+             )
+             .disabled(true)
+             .padding(.bottom, 60)
+        }
+    }
+    
+    // MARK: - 5. 清理完成页面
+    private var finishedPage: some View {
+        VStack(spacing: 0) {
+            // 顶部导航
+            HStack {
+                Button(action: {
+                    scanner.reset()
+                    showCleaningFinished = false
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.left")
+                        Text(loc.currentLanguage == .chinese ? "返回" : "Back")
+                    }
+                    .foregroundColor(.secondaryText)
+                }
+                .buttonStyle(.plain)
+                
+                Spacer()
+                
+                Text(loc.L("trash"))
+                    .font(.title2)
+                    .foregroundColor(.white)
+                
+                Spacer()
+                GridRow { Text("      ") } // Placeholder
+            }
+            .padding(.horizontal, 24)
+            .padding(.top, 20)
+            
+            Spacer()
+            
+            ZStack {
+                Circle()
+                    .fill(Color.green.opacity(0.8)) // 成功绿
+                    .frame(width: 160, height: 160)
+                    .shadow(color: .green.opacity(0.4), radius: 20, x: 0, y: 10)
+                
+                Image(systemName: "checkmark")
+                    .font(.system(size: 80))
+                    .foregroundColor(.white)
+            }
+            .padding(.bottom, 40)
+            
+            Text(loc.currentLanguage == .chinese ? "清理完成" : "Cleanup Complete")
+                .font(.title)
+                .bold()
+                .foregroundColor(.white)
+            
+            Text(loc.currentLanguage == .chinese ? "共释放 \(ByteCountFormatter.string(fromByteCount: scanner.cleanedSize, countStyle: .file)) 空间" : "Freed \(ByteCountFormatter.string(fromByteCount: scanner.cleanedSize, countStyle: .file)) space")
+                .foregroundColor(.secondaryText)
+                .padding(.top, 8)
+            
+            Spacer()
+            
+            // 完成按钮
+             CircularActionButton(
+                 title: loc.currentLanguage == .chinese ? "完成" : "Done",
+                 gradient: CircularActionButton.blueGradient,
+                 action: {
+                     scanner.reset()
+                     showCleaningFinished = false
+                 }
+             )
+             .padding(.bottom, 60)
+        }
     }
 }
 
+// 辅助视图：显示文件列表详情（保留之前的 TrashDirectoryView implementation）
+// 虽然后续设计中可能不需要，但为了兼容性保留
 struct TrashDirectoryView: View {
     let url: URL
     @State private var items: [TrashItem] = []
@@ -623,5 +863,37 @@ struct TrashDirectoryView: View {
                 Label(loc.currentLanguage == .chinese ? "立即删除" : "Delete Immediately", systemImage: "trash")
             }
         }
+    }
+}
+
+struct TrashItemRow: View {
+    let item: TrashItem
+    
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(nsImage: NSWorkspace.shared.icon(forFile: item.url.path))
+                .resizable()
+                .frame(width: 32, height: 32)
+            
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.name)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(.primaryText)
+                    .lineLimit(1)
+                
+                Text("删除于 \(item.formattedDate)")
+                    .font(.system(size: 11))
+                    .foregroundColor(.tertiaryText)
+            }
+            
+            Spacer()
+            
+            Text(item.formattedSize)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(.secondaryText)
+        }
+        .padding(12)
+        .background(Color.white.opacity(0.05))
+        .cornerRadius(10)
     }
 }

@@ -1,501 +1,620 @@
 import SwiftUI
 
+// MARK: - Deep Clean States
+enum DeepCleanState {
+    case initial
+    case scanning
+    case results
+    case cleaning
+    case finished
+}
+
 struct DeepCleanView: View {
     @Binding var selectedModule: AppModule
-    // 使用共享的服务管理器，切换视图时扫描状态不会丢失
     @ObservedObject private var scanner = ScanServiceManager.shared.deepCleanScanner
+    @State private var viewState: DeepCleanState = .initial
+    @State private var showingDetails = false
+    @State private var selectedCategoryForDetails: DeepCleanCategory?
     @ObservedObject private var loc = LocalizationManager.shared
+    
+    // Alert States
     @State private var showCleanConfirmation = false
     @State private var cleanResult: (count: Int, size: Int64)?
-    @State private var showResult = false
-    @State private var showingDetails = false
     
     var body: some View {
         ZStack {
-            VStack(spacing: 0) {
-                // 头部
-                headerView
-                
-                if scanner.isScanning {
-                    scanningView
-                } else if scanner.orphanedItems.isEmpty {
-                    emptyStateView
-                } else {
-                    // 内容区
-                    contentView
-                }
+            // Background
+            
+            VStack {
+                 switch viewState {
+                 case .initial:
+                     initialView
+                 case .scanning:
+                     scanningView
+                 case .results:
+                     resultsView
+                 case .cleaning:
+                     cleaningView
+                 case .finished:
+                     finishedView
+                 }
             }
         }
         .onAppear {
-            if scanner.orphanedItems.isEmpty && !scanner.isScanning {
-                Task { await scanner.scan() }
+            // Sync state if already scanning
+            if scanner.isScanning {
+                viewState = .scanning
+            } else if scanner.isCleaning {
+                viewState = .cleaning
+            } else if scanner.totalSize > 0 && viewState == .initial {
+                 viewState = .results // Resume results if available
             }
         }
+        .onChange(of: scanner.isScanning) { isScanning in
+             if isScanning { viewState = .scanning }
+             else if scanner.totalSize > 0 { viewState = .results }
+        }
+        .onChange(of: scanner.isCleaning) { isCleaning in
+             if isCleaning { viewState = .cleaning }
+             else if cleanResult != nil { viewState = .finished }
+        }
+        .sheet(isPresented: $showingDetails) {
+            DeepCleanDetailView(scanner: scanner, category: selectedCategoryForDetails, isPresented: $showingDetails)
+        }
         .confirmationDialog(loc.L("confirm_clean"), isPresented: $showCleanConfirmation) {
-            Button(loc.currentLanguage == .chinese ? "清理 \(scanner.selectedCount) 个项目" : "Clean \(scanner.selectedCount) items", role: .destructive) {
+            Button(loc.currentLanguage == .chinese ? "开始清理" : "Start Cleaning", role: .destructive) {
                 Task {
                     let result = await scanner.cleanSelected()
                     cleanResult = result
-                    showResult = true
-                    DiskSpaceManager.shared.updateDiskSpace()
                 }
             }
             Button(loc.L("cancel"), role: .cancel) {}
         } message: {
-            Text("将清理 \(ByteCountFormatter.string(fromByteCount: scanner.selectedSize, countStyle: .file)) 的残留文件，文件将被移至废纸篓。")
-        }
-        .alert(loc.L("clean_complete"), isPresented: $showResult) {
-            Button(loc.L("confirm")) { showResult = false }
-        } message: {
-            if let result = cleanResult {
-                Text("已清理 \(result.count) 个项目，释放了 \(ByteCountFormatter.string(fromByteCount: result.size, countStyle: .file)) 空间")
-            }
-        }
-        .sheet(isPresented: $showingDetails) {
-            detailSheet
+            Text(loc.currentLanguage == .chinese ? 
+                 "确定要清理选中的 \(scanner.selectedCount) 个项目吗？总大小 \(ByteCountFormatter.string(fromByteCount: scanner.selectedSize, countStyle: .file))" :
+                 "Are you sure you want to clean \(scanner.selectedCount) selected items? Total size: \(ByteCountFormatter.string(fromByteCount: scanner.selectedSize, countStyle: .file))")
         }
     }
     
-    // MARK: - 头部视图
-    private var headerView: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(loc.L("deep_clean"))
-                    .font(.largeTitle)
-                    .bold()
-                    .foregroundColor(.white)
-                Text(loc.L("deepClean_desc"))
-                    .foregroundColor(.secondaryText)
-            }
+    // MARK: - 1. Initial View (初始化页面)
+    var initialView: some View {
+        VStack(spacing: 0) {
             Spacer()
             
-            if !scanner.isScanning && !scanner.orphanedItems.isEmpty {
-                HStack(spacing: 12) {
-                    Button(action: { scanner.selectAll() }) {
-                        Text(loc.L("selectAll"))
-                            .font(.caption)
-                            .foregroundColor(.secondaryText)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(Color.white.opacity(0.05))
-                            .cornerRadius(6)
-                    }
-                    .buttonStyle(.plain)
-                    
-                    Button(action: { scanner.deselectAll() }) {
-                        Text(loc.L("deselectAll"))
-                            .font(.caption)
-                            .foregroundColor(.secondaryText)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(Color.white.opacity(0.05))
-                            .cornerRadius(6)
-                    }
-                    .buttonStyle(.plain)
-                    
-                    Button(action: { Task { await scanner.scan() } }) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "arrow.clockwise")
-                            Text(loc.L("refresh"))
-                        }
-                        .font(.caption)
-                        .foregroundColor(.secondaryText)
-                        .padding(8)
-                        .background(Color.white.opacity(0.05))
-                        .cornerRadius(8)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-        }
-        .padding(24)
-        .padding(.bottom, 0)
-    }
-    
-    // MARK: - 内容视图
-    private var contentView: some View {
-        VStack(spacing: 20) {
-            // 顶部统计卡片
-            statsCardsView
-                .padding(.horizontal, 24)
-            
-            // 左右分栏
-            HStack(alignment: .top, spacing: 20) {
-                // 左侧列表
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(loc.currentLanguage == .chinese ? "残留文件 (\(scanner.orphanedItems.count))" : "Orphaned Files (\(scanner.orphanedItems.count))")
-                        .font(.headline)
-                        .foregroundColor(.secondaryText)
-                        .padding(.leading, 4)
-                    
-                    orphanedListView
-                }
-                .frame(maxWidth: .infinity)
+            // Icon
+            ZStack {
+                Circle()
+                    .fill(LinearGradient(colors: [Color.cyan.opacity(0.3), Color.blue.opacity(0.3)], startPoint: .topLeading, endPoint: .bottomTrailing))
+                    .frame(width: 180, height: 180)
                 
-                // 右侧预览区
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(loc.currentLanguage == .chinese ? "清理效果" : "Cleanup Result")
-                        .font(.headline)
-                        .foregroundColor(.secondaryText)
-                    
-                    cleanupPreviewCard
-                }
-                .frame(width: 280)
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 80))
+                    .foregroundColor(.cyan)
             }
-            .padding(.horizontal, 24)
+            .padding(.bottom, 40)
             
-            // 底部操作栏
-            bottomActionBar
-        }
-        .padding(.top, 10)
-    }
-    
-    // MARK: - 统计卡片
-    private var statsCardsView: some View {
-        HStack(spacing: 16) {
-            DeepCleanStatsCard(
-                icon: "folder.badge.questionmark",
-                title: loc.currentLanguage == .chinese ? "应用残留" : "App Leftovers",
-                count: count(for: .applicationSupport) + count(for: .containers),
-                size: size(for: .applicationSupport) + size(for: .containers),
-                color: .orange
-            )
+            // Title
+            Text(loc.currentLanguage == .chinese ? "深度系统清理" : "Deep System Clean")
+                .font(.system(size: 28, weight: .semibold))
+                .foregroundColor(.white)
+                .padding(.bottom, 12)
             
-            DeepCleanStatsCard(
-                icon: "internaldrive",
-                title: loc.currentLanguage == .chinese ? "缓存文件" : "Cache Files",
-                count: count(for: .caches),
-                size: size(for: .caches),
-                color: .blue
-            )
+            Text(loc.currentLanguage == .chinese ? 
+                 "扫描整个 Mac 的大文件、垃圾文件、缓存、日志及应用残留。" :
+                 "Scan your entire Mac for large files, junk, caches, logs, and leftovers.")
+                .font(.body)
+                .foregroundColor(.secondaryText)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 60)
+                .padding(.bottom, 60)
             
-            DeepCleanStatsCard(
-                icon: "doc.text",
-                title: loc.currentLanguage == .chinese ? "日志文件" : "Log Files",
-                count: count(for: .logs),
-                size: size(for: .logs),
-                color: .purple
+            Spacer()
+            
+            // Start Button (using CircularActionButton)
+            CircularActionButton(
+                title: loc.currentLanguage == .chinese ? "扫描" : "Scan",
+                gradient: CircularActionButton.blueGradient,
+                action: {
+                    Task { await scanner.startScan() }
+                }
             )
+            .padding(.bottom, 60)
         }
     }
     
-    private func count(for type: OrphanedType) -> Int {
-        scanner.orphanedItems.filter { $0.type == type }.count
-    }
-    
-    private func size(for type: OrphanedType) -> Int64 {
-        scanner.orphanedItems.filter { $0.type == type }.reduce(0) { $0 + $1.size }
-    }
-    
-    // MARK: - 残留文件列表
-    private var orphanedListView: some View {
-        List {
-            ForEach(OrphanedType.allCases, id: \.self) { type in
-                let typeItems = scanner.orphanedItems.filter { $0.type == type }
-                if !typeItems.isEmpty {
-                    Section(header:
-                        HStack {
-                            Image(systemName: type.icon)
-                                .foregroundColor(type.color)
-                            Text(localizedTypeName(for: type))
-                            Text("(\(typeItems.count))")
-                                .foregroundColor(.gray)
-                            Spacer()
-                            Text(ByteCountFormatter.string(fromByteCount: typeItems.reduce(0) { $0 + $1.size }, countStyle: .file))
-                                .foregroundColor(.gray)
-                        }
-                        .font(.subheadline)
-                        .foregroundColor(.white)
-                        .padding(.vertical, 4)
-                    ) {
-                        ForEach(typeItems) { item in
-                            DeepCleanRow(item: item, scanner: scanner)
-                        }
-                    }
+    // MARK: - 2. Scanning View (扫描中页面)
+    var scanningView: some View {
+        VStack(spacing: 0) {
+            // Title
+            HStack {
+                Text(loc.currentLanguage == .chinese ? "深度清理" : "Deep Clean")
+                    .font(.title2)
+                    .foregroundColor(.white)
+            }
+            .padding(.top, 20)
+            
+            Spacer()
+            
+            // Dashboard Grid
+            HStack(spacing: 30) {
+                ForEach(DeepCleanCategory.allCases, id: \.self) { category in
+                    scanningCategoryCard(for: category)
                 }
             }
-        }
-        .listStyle(.sidebar)
-        .scrollContentBackground(.hidden)
-        .background(Color.clear)
-        .cornerRadius(12)
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(Color.white.opacity(0.1), lineWidth: 1)
-        )
-    }
-    
-    private func localizedTypeName(for type: OrphanedType) -> String {
-        switch type {
-        case .applicationSupport:
-            return loc.L("app_support")
-        case .caches:
-            return loc.L("cache")
-        case .preferences:
-            return loc.L("preferences")
-        case .containers:
-            return loc.currentLanguage == .chinese ? "沙盒容器" : "Sandbox Containers"
-        case .savedState:
-            return loc.L("saved_state")
-        case .logs:
-            return loc.L("logs")
-        }
-    }
-    
-    // MARK: - 预览卡片
-    private var cleanupPreviewCard: some View {
-        VStack(spacing: 24) {
-            HStack(spacing: 20) {
-                // Before
-                VStack {
-                    Image(systemName: "folder.fill.badge.minus")
-                        .font(.system(size: 40))
-                        .foregroundColor(.gray)
-                    Text(loc.currentLanguage == .chinese ? "残留文件" : "Leftovers")
-                        .font(.caption)
-                        .foregroundColor(.gray)
-                    Text(ByteCountFormatter.string(fromByteCount: scanner.totalSize, countStyle: .file))
-                        .font(.headline)
-                        .foregroundColor(.gray)
+            .padding(.horizontal, 40)
+            
+            Spacer()
+            
+            // Stop Button with Progress
+            CircularActionButton(
+                title: loc.currentLanguage == .chinese ? "停止" : "Stop",
+                gradient: CircularActionButton.stopGradient,
+                progress: scanner.scanProgress,
+                showProgress: true,
+                scanSize: ByteCountFormatter.string(fromByteCount: scanner.totalSize, countStyle: .file),
+                action: {
+                    scanner.stopScan()
+                    viewState = .initial
                 }
-                
-                // After
-                VStack {
-                    ZStack(alignment: .bottomTrailing) {
-                        Image(systemName: "folder.fill")
-                            .font(.system(size: 48))
-                            .foregroundColor(.green)
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 20))
-                            .foregroundColor(.white)
-                            .offset(x: 4, y: 4)
-                    }
-                    Text(loc.currentLanguage == .chinese ? "可释放" : "Cleanable")
-                        .font(.caption)
-                        .foregroundColor(.gray)
-                    Text(ByteCountFormatter.string(fromByteCount: scanner.selectedSize, countStyle: .file))
-                        .font(.headline)
-                        .foregroundColor(.green)
+            )
+            .padding(.bottom, 20)
+            
+            // Current scanning path (at bottom, like Smart Scan)
+            Text(scanner.currentScanningUrl)
+                .font(.caption)
+                .foregroundColor(.secondaryText.opacity(0.6))
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .padding(.horizontal, 40)
+                .padding(.bottom, 20)
+        }
+    }
+    
+    // MARK: - 4. Cleaning View (清理中页面 - Dashboard Style)
+    var cleaningView: some View {
+        VStack(spacing: 0) {
+            Spacer()
+            
+            // Dashboard Grid for Cleaning
+            HStack(spacing: 30) {
+                ForEach(DeepCleanCategory.allCases, id: \.self) { category in
+                    cleaningCategoryCard(for: category)
                 }
             }
-            .padding(.top, 16)
+            .padding(.horizontal, 40)
             
-            Divider().background(Color.gray.opacity(0.3))
+            Spacer()
             
-            Button(action: { showingDetails = true }) {
-                Text(loc.currentLanguage == .chinese ? "查看详情" : "View Details")
+            VStack(spacing: 16) {
+                // Display current item being cleaned
+                Text(scanner.currentCleaningItem)
                     .font(.caption)
-                    .foregroundColor(.blue)
+                    .foregroundColor(.secondaryText)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(height: 20)
+                
+                Text(scanner.scanStatus)
+                    .font(.headline)
+                    .foregroundColor(.white)
+                
+                // Progress Ring
+                ZStack {
+                    Circle()
+                        .stroke(Color.white.opacity(0.2), lineWidth: 4)
+                        .frame(width: 60, height: 60)
+                    
+                    Circle()
+                        .trim(from: 0, to: scanner.cleaningProgress)
+                        .stroke(Color(hex: "00E8A8"), lineWidth: 4)
+                        .frame(width: 60, height: 60)
+                        .rotationEffect(.degrees(-90))
+                    
+                    Text(String(format: "%.0f%%", scanner.cleaningProgress * 100))
+                        .font(.caption)
+                        .foregroundColor(.white)
+                }
             }
-            .buttonStyle(.plain)
-            .padding(.bottom, 16)
+            .padding(.bottom, 80)
         }
-        .padding(24)
-        .background(Color.white)
-        .colorScheme(.light)
+    }
+    
+    func cleaningCategoryCard(for category: DeepCleanCategory) -> some View {
+        // Simple logic: if we are cleaning this category, show spinner; if done, checkmark
+        // Since granular cleaning progress isn't tracked in scanner yet, we'll confirm 'done' if not selected or if cleaned.
+        // For now, simpler visual: Checkmark if NOT selected (skipped) or if cleaned.
+        // Spinner if selected and cleaning.
+        
+        // Improve: Scanner needs 'currentlyCleaningCategory'
+        let isSelected = scanner.items.contains { $0.category == category && $0.isSelected }
+        
+        return VStack(spacing: 16) {
+            ZStack {
+                Circle()
+                    .fill(category.color.opacity(0.1))
+                    .frame(width: 80, height: 80)
+                
+                if isSelected {
+                    ProgressView() // Placeholder for actual granular progress
+                         .progressViewStyle(CircularProgressViewStyle(tint: category.color))
+                         .scaleEffect(1.5)
+                } else {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 30, weight: .bold)) // Show 'done' or 'skipped'
+                        .foregroundColor(.gray.opacity(0.5))
+                }
+            }
+            
+            Text(category.localizedName)
+                .font(.headline)
+                .foregroundColor(.white)
+        }
+        .frame(width: 140)
+    }
+    
+    func scanningCategoryCard(for category: DeepCleanCategory) -> some View {
+        let isCompleted = scanner.completedCategories.contains(category)
+        let isScanningThis = !isCompleted && scanner.scanProgress < 1.0 // Simplified logic
+        
+        return VStack(spacing: 16) {
+            ZStack {
+                Circle()
+                    .fill(category.color.opacity(0.1))
+                    .frame(width: 80, height: 80)
+                
+                if isCompleted {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 30, weight: .bold))
+                        .foregroundColor(.green)
+                } else {
+                    Image(systemName: category.icon)
+                        .font(.system(size: 36))
+                        .foregroundColor(category.color)
+                        .scaleEffect(isScanningThis ? 1.1 : 1.0)
+                        .animation(isScanningThis ? .easeInOut(duration: 0.8).repeatForever(autoreverses: true) : .default, value: isScanningThis)
+                }
+            }
+            
+            VStack(spacing: 4) {
+                Text(category.localizedName)
+                    .font(.headline)
+                    .foregroundColor(.white)
+                
+                if isCompleted {
+                    let size = scanner.items.filter { $0.category == category }.reduce(0) { $0 + $1.size }
+                    Text(ByteCountFormatter.string(fromByteCount: size, countStyle: .file))
+                        .font(.caption)
+                        .foregroundColor(.secondaryText)
+                } else {
+                    Text(LocalizationManager.shared.currentLanguage == .chinese ? "扫描中..." : "Scanning...")
+                        .font(.caption)
+                        .foregroundColor(.secondaryText)
+                }
+            }
+        }
+        .frame(width: 140)
+    }
+    
+    // MARK: - 3. Results View (扫描结果页面)
+    var resultsView: some View {
+        VStack(spacing: 0) {
+            Spacer()
+            
+            // Dashboard Grid (Results Mode)
+            HStack(spacing: 20) {
+                ForEach(DeepCleanCategory.allCases, id: \.self) { category in
+                    resultCategoryCard(for: category)
+                }
+            }
+            .padding(.horizontal, 40)
+            
+            Spacer()
+            
+            // Bottom Action Bar
+            VStack(spacing: 24) {
+                VStack(spacing: 8) {
+                    Text(LocalizationManager.shared.currentLanguage == .chinese ? "已选择" : "Selected")
+                        .font(.caption)
+                        .foregroundColor(.secondaryText)
+                    Text(ByteCountFormatter.string(fromByteCount: scanner.selectedSize, countStyle: .file))
+                        .font(.system(size: 32, weight: .bold))
+                        .foregroundColor(.white)
+                }
+                
+                Button(action: {
+                    if scanner.selectedCount > 0 {
+                        showCleanConfirmation = true
+                    }
+                }) {
+                    Text(LocalizationManager.shared.currentLanguage == .chinese ? "立即清理" : "Clean Now")
+                        .font(.headline)
+                        .foregroundColor(.white)
+                        .frame(width: 200, height: 50)
+                        .background(scanner.selectedCount > 0 ? Color.blue : Color.gray.opacity(0.3))
+                        .cornerRadius(25)
+                        .shadow(color: scanner.selectedCount > 0 ? .blue.opacity(0.4) : .clear, radius: 10, x: 0, y: 5)
+                        .scaleEffect(scanner.selectedCount > 0 ? 1.05 : 1.0)
+                        .animation(.easeInOut(duration: 1).repeatForever(autoreverses: true), value: scanner.selectedCount > 0)
+                }
+                .buttonStyle(.plain)
+                .disabled(scanner.selectedCount == 0)
+                
+                Button(action: {
+                    viewState = .initial
+                    scanner.reset()
+                }) {
+                    Text(LocalizationManager.shared.currentLanguage == .chinese ? "重新开始" : "Start Over")
+                        .font(.subheadline)
+                        .foregroundColor(.secondaryText)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.bottom, 50)
+        }
+    }
+    
+    func resultCategoryCard(for category: DeepCleanCategory) -> some View {
+        let items = scanner.items.filter { $0.category == category }
+        let size = items.reduce(0) { $0 + $1.size }
+        let count = items.count
+        
+        return VStack(spacing: 16) {
+            ZStack {
+                Circle()
+                    .fill(category.color.opacity(0.1))
+                    .frame(width: 80, height: 80)
+                
+                Image(systemName: category.icon)
+                    .font(.system(size: 36))
+                    .foregroundColor(category.color)
+            }
+            
+            VStack(spacing: 4) {
+                Text(category.localizedName)
+                    .font(.headline)
+                    .foregroundColor(.white)
+                
+                Text(ByteCountFormatter.string(fromByteCount: size, countStyle: .file))
+                    .font(.subheadline)
+                    .bold()
+                    .foregroundColor(.white)
+                
+                Button(action: {
+                    selectedCategoryForDetails = category
+                    showingDetails = true
+                }) {
+                    Text(LocalizationManager.shared.currentLanguage == .chinese ? "查看详情" : "Details")
+                        .font(.caption)
+                        .foregroundColor(.blue)
+                        .padding(.vertical, 4)
+                        .padding(.horizontal, 12)
+                        .background(Color.blue.opacity(0.1))
+                        .cornerRadius(12)
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 4)
+            }
+        }
+        .frame(width: 140)
+        .padding(.vertical, 20)
+        .background(Color.white.opacity(0.02))
         .cornerRadius(16)
     }
     
-    // MARK: - 底部操作栏
-    private var bottomActionBar: some View {
-        HStack {
-            Button(loc.currentLanguage == .chinese ? "查看详情" : "View Details") {
-                showingDetails = true
+
+    
+    // MARK: - 5. Finished View (清理完成页面)
+    var finishedView: some View {
+        VStack(spacing: 30) {
+            Spacer()
+            
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 100))
+                .foregroundColor(.green)
+                .shadow(color: .green.opacity(0.5), radius: 20, x: 0, y: 0)
+            
+            Text(loc.currentLanguage == .chinese ? "清理完成！" : "Cleanup Complete!")
+                .font(.largeTitle)
+                .fontWeight(.bold)
+                .foregroundColor(.white)
+            
+            if let result = cleanResult {
+                VStack(spacing: 12) {
+                    Text(loc.currentLanguage == .chinese ? 
+                         "成功释放空间：" : "Space Freed:")
+                        .font(.headline)
+                        .foregroundColor(.secondaryText)
+                    
+                    Text(ByteCountFormatter.string(fromByteCount: result.size, countStyle: .file))
+                        .font(.system(size: 48, weight: .bold))
+                        .foregroundStyle(
+                            LinearGradient(colors: [.green, .blue], startPoint: .leading, endPoint: .trailing)
+                        )
+                    
+                    Text(loc.currentLanguage == .chinese ? 
+                         "删除了 \(result.count) 个不需要的文件" :
+                         "Removed \(result.count) unwanted files")
+                        .font(.subheadline)
+                        .foregroundColor(.secondaryText)
+                }
+                .padding(.vertical, 20)
             }
-            .buttonStyle(.plain)
-            .foregroundColor(.blue)
             
             Spacer()
             
             Button(action: {
-                if scanner.selectedCount > 0 {
-                    showCleanConfirmation = true
-                }
+                viewState = .initial
+                scanner.reset()
+                cleanResult = nil
             }) {
-                Text(loc.currentLanguage == .chinese ? "深度清理" : "Deep Clean")
-                    .font(.system(size: 16, weight: .semibold))
+                Text(loc.currentLanguage == .chinese ? "好的" : "Done")
+                    .font(.headline)
                     .foregroundColor(.white)
-                    .frame(width: 200, height: 44)
-                    .background(
-                        LinearGradient(colors: [Color(red: 0.0, green: 0.6, blue: 0.4), Color(red: 0.0, green: 0.4, blue: 0.3)], startPoint: .leading, endPoint: .trailing)
-                    )
-                    .cornerRadius(22)
-                    .shadow(color: Color(red: 0.0, green: 0.4, blue: 0.3).opacity(0.4), radius: 8, x: 0, y: 4)
+                    .frame(width: 200, height: 50)
+                    .background(Color.green)
+                    .cornerRadius(25)
             }
             .buttonStyle(.plain)
-            .disabled(scanner.selectedCount == 0)
-            
-            Spacer()
-            
-            Button(loc.currentLanguage == .chinese ? "跳过" : "Skip") {
-                skipToNextModule()
-            }
-            .buttonStyle(.plain)
-            .foregroundColor(.secondaryText)
+            .padding(.bottom, 50)
         }
-        .padding(24)
-        .background(Color.black.opacity(0.2))
-    }
-    
-    // MARK: - 扫描动画
-    private var scanningView: some View {
-        VStack(spacing: 40) {
-            Spacer()
-            ZStack {
-                Circle().stroke(Color.white.opacity(0.1), lineWidth: 10).frame(width: 200, height: 200)
-                Circle()
-                    .trim(from: 0, to: 0.7)
-                    .stroke(Color.green, lineWidth: 10)
-                    .frame(width: 200, height: 200)
-                    .rotationEffect(.degrees(-90))
-                    .rotationEffect(.degrees(Double.random(in: 0...360)))
-                    .animation(.linear(duration: 1).repeatForever(autoreverses: false), value: UUID())
-                
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 60))
-                    .foregroundColor(.green)
-            }
-            Text(scanner.scanProgress)
-                .font(.title3)
-                .foregroundColor(.white)
-            Spacer()
-        }
-    }
-    
-    private var emptyStateView: some View {
-        VStack(spacing: 20) {
-            Spacer()
-            Image(systemName: "sparkles")
-                .font(.system(size: 80))
-                .foregroundColor(.green)
-            Text(loc.currentLanguage == .chinese ? "系统很干净!" : "System is Clean!")
-                .font(.title)
-                .foregroundColor(.white)
-            Text(loc.L("no_orphaned_files"))
-                .font(.subheadline)
-                .foregroundColor(.secondaryText)
-            
-            Button(action: { Task { await scanner.scan() } }) {
-                HStack {
-                    Image(systemName: "arrow.clockwise")
-                    Text(loc.currentLanguage == .chinese ? "重新扫描" : "Rescan")
-                }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 10)
-                .background(Color.white.opacity(0.1))
-                .cornerRadius(8)
-            }
-            .buttonStyle(.plain)
-            .foregroundColor(.white.opacity(0.7))
-            Spacer()
-        }
-    }
-    
-    // MARK: - 跳过到下一个模块
-    private func skipToNextModule() {
-        let allModules = AppModule.allCases
-        if let currentIndex = allModules.firstIndex(of: selectedModule),
-           currentIndex < allModules.count - 1 {
-            selectedModule = allModules[currentIndex + 1]
-        } else {
-            selectedModule = allModules.first ?? .monitor
-        }
-    }
-    
-    // MARK: - 详情 Sheet
-    private var detailSheet: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Text(loc.currentLanguage == .chinese ? "扫描详情" : "Scan Details")
-                    .font(.title2)
-                    .bold()
-                Spacer()
-                Button(action: { showingDetails = false }) {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.title2)
-                        .foregroundColor(.gray)
-                }
-                .buttonStyle(.plain)
-            }
-            .padding()
-            
-            Divider()
-            
-            List {
-                ForEach(scanner.orphanedItems) { item in
-                    HStack {
-                        Image(systemName: item.type.icon)
-                            .foregroundColor(item.type.color)
-                        VStack(alignment: .leading) {
-                            Text(item.name)
-                                .font(.system(size: 13, weight: .medium))
-                            Text(item.url.path)
-                                .font(.system(size: 11))
-                                .foregroundColor(.gray)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                        }
-                        Spacer()
-                        Text(item.formattedSize)
-                            .font(.system(size: 12))
-                            .foregroundColor(.gray)
-                    }
-                    .padding(.vertical, 4)
-                }
-            }
-        }
-        .frame(width: 600, height: 500)
     }
 }
 
-// MARK: - Subviews
-
-struct DeepCleanStatsCard: View {
-    let icon: String
-    let title: String
-    let count: Int
-    let size: Int64
-    let color: Color
+// MARK: - 6. Detail View Setup (Split View)
+struct DeepCleanDetailView: View {
+    @ObservedObject var scanner: DeepCleanScanner
+    @State var selectedCategory: DeepCleanCategory? // Local state for sidebar selection
+    @Binding var isPresented: Bool
+    
+    // Binding passed from parent to initialize selection
+    var initialCategory: DeepCleanCategory?
+    
+    init(scanner: DeepCleanScanner, category: DeepCleanCategory?, isPresented: Binding<Bool>) {
+        self.scanner = scanner
+        self._selectedCategory = State(initialValue: category ?? .junkFiles)
+        self._isPresented = isPresented
+        self.initialCategory = category
+    }
     
     var body: some View {
-        HStack(spacing: 12) {
-            ZStack {
-                Circle()
-                    .stroke(color.opacity(0.3), lineWidth: 2)
-                    .frame(width: 48, height: 48)
-                Image(systemName: icon)
-                    .font(.system(size: 24))
-                    .foregroundColor(color)
-            }
-            
-            VStack(alignment: .leading) {
-                Text(title)
-                    .font(.caption)
-                    .foregroundColor(.gray)
-                HStack(alignment: .lastTextBaseline, spacing: 2) {
-                    Text("\(count)")
-                        .font(.title2)
-                        .bold()
-                        .foregroundColor(.black)
-                    Text("项")
-                        .font(.caption)
-                        .foregroundColor(.gray)
+        HStack(spacing: 0) {
+            // Left Sidebar: Categories
+            VStack(alignment: .leading, spacing: 0) {
+                // Header Back Button
+                Button(action: { isPresented = false }) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "chevron.left")
+                        Text(LocalizationManager.shared.currentLanguage == .chinese ? "返回摘要" : "Back")
+                    }
+                    .foregroundColor(.secondaryText)
+                    .padding()
                 }
-                Text(ByteCountFormatter.string(fromByteCount: size, countStyle: .file))
-                    .font(.caption2)
-                    .foregroundColor(.gray.opacity(0.8))
+                .buttonStyle(.plain)
+                
+                Divider().background(Color.white.opacity(0.1))
+                
+                ScrollView {
+                    VStack(spacing: 8) {
+                        ForEach(DeepCleanCategory.allCases, id: \.self) { category in
+                            categorySidebarRow(category)
+                        }
+                    }
+                    .padding(12)
+                }
             }
-            Spacer()
+            .frame(width: 250)
+            .background(Color.black.opacity(0.3))
+            
+            Divider().background(Color.white.opacity(0.1))
+            
+            // Right Content: Items
+            VStack(spacing: 0) {
+                // Header
+                HStack {
+                    if let category = selectedCategory {
+                        Text(category.localizedName)
+                            .font(.title2)
+                            .bold()
+                            .foregroundColor(.white)
+                        
+                        Spacer()
+                        
+                        Text(LocalizationManager.shared.currentLanguage == .chinese ?
+                             "排序方式: 大小" : "Sort by: Size")
+                        .font(.caption)
+                        .foregroundColor(.secondaryText)
+                    }
+                }
+                .padding()
+                .background(Color.white.opacity(0.05))
+                
+                // Item List
+                if let category = selectedCategory {
+                    let items = scanner.items.filter { $0.category == category }
+                    
+                    if items.isEmpty {
+                        Spacer()
+                        Text(LocalizationManager.shared.currentLanguage == .chinese ? "无项目" : "No items")
+                            .foregroundColor(.secondaryText)
+                        Spacer()
+                    } else {
+                        List {
+                            ForEach(items) { item in
+                                DeepCleanItemRow(item: item, scanner: scanner)
+                            }
+                        }
+                        .listStyle(.plain)
+                    }
+                } else {
+                    Spacer()
+                }
+                
+                // Footer
+                HStack {
+                    Spacer()
+                    if let category = selectedCategory {
+                        let items = scanner.items.filter { $0.category == category }
+                         Text("\(items.count) items")
+                            .font(.caption)
+                            .foregroundColor(.secondaryText)
+                    }
+                }
+                .padding(8)
+                .background(Color.white.opacity(0.05))
+            }
+            .background(Color.black.opacity(0.1))
         }
-        .padding(16)
-        .background(Color.white)
-        .cornerRadius(12)
-        .colorScheme(.light)
+        .frame(width: 800, height: 600)
+        .background(Color(nsColor: .windowBackgroundColor)) // Ensure opaque background
+        .onAppear {
+            if let initial = initialCategory {
+                selectedCategory = initial
+            } else if selectedCategory == nil {
+                // Default to first category with items, or just first category
+                selectedCategory = DeepCleanCategory.allCases.first
+            }
+        }
+    }
+    
+    func categorySidebarRow(_ category: DeepCleanCategory) -> some View {
+        let items = scanner.items.filter { $0.category == category }
+        let size = items.reduce(0) { $0 + $1.size }
+        let isSelected = selectedCategory == category
+        
+        return Button(action: {
+            selectedCategory = category
+        }) {
+            HStack(spacing: 12) {
+                ZStack {
+                    Circle()
+                        .fill(category.color.opacity(0.2))
+                        .frame(width: 32, height: 32)
+                    Image(systemName: category.icon)
+                        .foregroundColor(category.color)
+                        .font(.system(size: 14))
+                }
+                
+                Text(category.localizedName)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(.white)
+                
+                Spacer()
+                
+                Text(ByteCountFormatter.string(fromByteCount: size, countStyle: .file))
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondaryText)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(isSelected ? Color.white.opacity(0.1) : Color.clear)
+            .cornerRadius(8)
+        }
+        .buttonStyle(.plain)
     }
 }
 
-struct DeepCleanRow: View {
-    let item: OrphanedItem
+struct DeepCleanItemRow: View {
+    let item: DeepCleanItem
     @ObservedObject var scanner: DeepCleanScanner
     
     var body: some View {
@@ -507,25 +626,36 @@ struct DeepCleanRow: View {
             .toggleStyle(CheckboxStyle())
             .labelsHidden()
             
-            Image(systemName: item.type.icon)
-                .foregroundColor(item.type.color)
+            if item.category == .appResiduals {
+                Image(systemName: "app.fill")
+                    .foregroundColor(.blue)
+                    .frame(width: 20)
+            } else {
+                 Image(systemName: "doc.fill")
+                    .foregroundColor(.secondary)
+                    .frame(width: 20)
+            }
             
-            VStack(alignment: .leading) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(item.name)
                     .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(.primaryText)
-                if let bundleId = item.bundleId {
-                    Text(bundleId)
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondaryText)
-                }
+                    .foregroundColor(.primary)
+                Text(item.url.path)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
             }
             
             Spacer()
             
             Text(item.formattedSize)
-                .font(.system(size: 13))
-                .foregroundColor(.primaryText)
+                .font(.system(size: 12))
+                .foregroundColor(.secondary)
+            
+            Image(systemName: "chevron.right")
+                .font(.caption)
+                .foregroundColor(.secondary.opacity(0.5))
         }
         .padding(.vertical, 4)
     }

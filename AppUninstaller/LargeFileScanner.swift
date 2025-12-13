@@ -7,6 +7,7 @@ struct FileItem: Identifiable, Sendable {
     let name: String
     let size: Int64
     let type: String
+    let accessDate: Date
     
     var formattedSize: String {
         ByteCountFormatter.string(fromByteCount: size, countStyle: .file)
@@ -21,21 +22,51 @@ class LargeFileScanner: ObservableObject {
     
     private let minimumSize: Int64 = 50 * 1024 * 1024 // 50MB
     
+    // Cleaning state
+    @Published var isCleaning = false
+    @Published var cleanedCount = 0
+    @Published var cleanedSize: Int64 = 0
+    @Published var isStopped = false
+    @Published var selectedFiles: Set<UUID> = []
+    private var shouldStop = false
+    
+    func stopScan() {
+        shouldStop = true
+        isScanning = false
+        isStopped = true
+    }
+    
+    func reset() {
+        foundFiles = []
+        isScanning = false
+        scannedCount = 0
+        totalSize = 0
+        isCleaning = false
+        cleanedCount = 0
+        cleanedSize = 0
+        isStopped = false
+        shouldStop = false
+        selectedFiles = []
+    }
+    
     func scan() async {
         await MainActor.run {
             self.isScanning = true
             self.foundFiles = []
             self.scannedCount = 0
             self.totalSize = 0
+            self.isStopped = false
+            self.shouldStop = false
         }
         
         let fileManager = FileManager.default
         let home = fileManager.homeDirectoryForCurrentUser
         
         // 获取 Home 下的主要子目录，并行扫描
+        // 扩展扫描范围以覆盖更多用户文件
         let mainDirectories = [
             "Documents", "Downloads", "Desktop", "Movies", "Music", "Pictures",
-            "Developer", "Projects", "Work", "src", "code"
+            "Developer", "Projects", "Work", "src", "code", "Public", "Creative Cloud Files"
         ]
         
         // 需要排除的目录
@@ -67,6 +98,7 @@ class LargeFileScanner: ObservableObject {
             var lastUpdateTime = Date()
             
             for await (files, count) in group {
+                if self.shouldStop { break }
                 batchFiles.append(contentsOf: files)
                 totalScannedCount += count
                 batchSize += files.reduce(0) { $0 + $1.size }
@@ -113,7 +145,7 @@ class LargeFileScanner: ObservableObject {
         
         guard let enumerator = fileManager.enumerator(
             at: directory,
-            includingPropertiesForKeys: [.fileSizeKey, .isDirectoryKey],
+            includingPropertiesForKeys: [.fileSizeKey, .isDirectoryKey, .contentAccessDateKey],
             options: options
         ) else { return (files, scannedCount) }
         
@@ -128,7 +160,7 @@ class LargeFileScanner: ObservableObject {
             }
             
             do {
-                let resourceValues = try fileURL.resourceValues(forKeys: [.fileSizeKey, .isDirectoryKey])
+                let resourceValues = try fileURL.resourceValues(forKeys: [.fileSizeKey, .isDirectoryKey, .contentAccessDateKey])
                 
                 // 跳过目录
                 if let isDirectory = resourceValues.isDirectory, isDirectory {
@@ -137,11 +169,13 @@ class LargeFileScanner: ObservableObject {
                 
                 // 检查文件大小
                 if let fileSize = resourceValues.fileSize, Int64(fileSize) > minimumSize {
+                    let accessDate = resourceValues.contentAccessDate ?? Date()
                     let item = FileItem(
                         url: fileURL,
                         name: fileURL.lastPathComponent,
                         size: Int64(fileSize),
-                        type: fileURL.pathExtension.isEmpty ? "File" : fileURL.pathExtension.uppercased()
+                        type: fileURL.pathExtension.isEmpty ? "File" : fileURL.pathExtension.uppercased(),
+                        accessDate: accessDate
                     )
                     files.append(item)
                 }
@@ -162,14 +196,14 @@ class LargeFileScanner: ObservableObject {
         do {
             let contents = try fileManager.contentsOfDirectory(
                 at: home,
-                includingPropertiesForKeys: [.fileSizeKey, .isDirectoryKey],
+                includingPropertiesForKeys: [.fileSizeKey, .isDirectoryKey, .contentAccessDateKey],
                 options: [.skipsHiddenFiles]
             )
             
             for fileURL in contents {
                 scannedCount += 1
                 
-                let resourceValues = try? fileURL.resourceValues(forKeys: [.fileSizeKey, .isDirectoryKey])
+                let resourceValues = try? fileURL.resourceValues(forKeys: [.fileSizeKey, .isDirectoryKey, .contentAccessDateKey])
                 
                 // 只处理文件，不处理目录
                 if let isDirectory = resourceValues?.isDirectory, isDirectory {
@@ -177,11 +211,13 @@ class LargeFileScanner: ObservableObject {
                 }
                 
                 if let fileSize = resourceValues?.fileSize, Int64(fileSize) > minimumSize {
+                    let accessDate = (try? resourceValues?.contentAccessDate) ?? Date()
                     let item = FileItem(
                         url: fileURL,
                         name: fileURL.lastPathComponent,
                         size: Int64(fileSize),
-                        type: fileURL.pathExtension.isEmpty ? "File" : fileURL.pathExtension.uppercased()
+                        type: fileURL.pathExtension.isEmpty ? "File" : fileURL.pathExtension.uppercased(),
+                        accessDate: accessDate
                     )
                     files.append(item)
                 }
@@ -218,6 +254,8 @@ class LargeFileScanner: ObservableObject {
          await MainActor.run {
              self.foundFiles = remainingFiles
              self.totalSize = newTotal
+             self.cleanedCount += successCount
+             self.cleanedSize += recoveredSize
          }
     }
 }

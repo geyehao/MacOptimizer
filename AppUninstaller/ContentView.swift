@@ -2,7 +2,7 @@ import SwiftUI
 import AppKit
 
 struct ContentView: View {
-    @State private var selectedModule: AppModule = .monitor
+    @State private var selectedModule: AppModule = .smartClean
     
     var body: some View {
         ZStack {
@@ -31,7 +31,7 @@ struct ContentView: View {
                             JunkCleanerView()
                                 .transition(.opacity.combined(with: .move(edge: .trailing)))
                         case .optimizer:
-                            OptimizerView()
+                            MaintenanceView()
                                 .transition(.opacity.combined(with: .move(edge: .trailing)))
                         case .largeFiles:
                             LargeFileView(selectedModule: $selectedModule)
@@ -65,126 +65,9 @@ struct ContentView: View {
 // 包装现有的 Uninstaller 视图
 struct UninstallerMainView: View {
     @StateObject private var appScanner = AppScanner()
-    @ObservedObject private var loc = LocalizationManager.shared
-    @State private var selectedApp: InstalledApp?
-    @State private var searchText = ""
-    @State private var showingDeleteConfirmation = false
-    @State private var includeAppInDeletion = true
-    @State private var moveToTrash = true
-    @State private var deleteResult: RemovalResult?
-    @State private var showingResultAlert = false
-    
-    private let residualScanner = ResidualFileScanner()
-    private let fileRemover = FileRemover()
-    
-    // 计算属性需要在View内部处理，不能直接访问StateObject的published属性进行过滤（虽然可以，但建议解耦）
-    var filteredApps: [InstalledApp] {
-        if searchText.isEmpty {
-            return appScanner.apps
-        }
-        return appScanner.apps.filter { app in
-            app.name.localizedCaseInsensitiveContains(searchText) ||
-            (app.bundleIdentifier?.localizedCaseInsensitiveContains(searchText) ?? false)
-        }
-    }
     
     var body: some View {
-        HSplitView {
-            // 应用列表 (中间列)
-            AppListView(
-                apps: filteredApps,
-                selectedApp: selectedApp,
-                isScanning: appScanner.isScanning,
-                searchText: $searchText,
-                onSelect: { app in
-                    withAnimation {
-                        selectedApp = app
-                    }
-                    if !app.isScanning && app.residualFiles.isEmpty {
-                        Task {
-                             await MainActor.run { app.isScanning = true }
-                             let residuals = await residualScanner.scanResidualFiles(for: app)
-                             await MainActor.run {
-                                 app.residualFiles = residuals
-                                 app.isScanning = false
-                             }
-                        }
-                    }
-                },
-                onRefresh: {
-                    Task { await appScanner.scanApplications() }
-                },
-                loc: loc
-            )
-            .frame(minWidth: 300, maxWidth: 400)
-            
-            // 详情视图 (右侧列)
-            Group {
-                if let app = selectedApp {
-                    AppDetailView(
-                        app: app,
-                        onDelete: { includeApp, toTrash in
-                            includeAppInDeletion = includeApp
-                            moveToTrash = toTrash
-                            showingDeleteConfirmation = true
-                        }
-                    )
-                } else {
-                    EmptySelectionView()
-                }
-            }
-            .frame(minWidth: 400)
-        }
-        .onAppear {
-            if appScanner.apps.isEmpty {
-                Task { await appScanner.scanApplications() }
-            }
-        }
-        .confirmationDialog(
-            loc.L("confirm_delete"),
-            isPresented: $showingDeleteConfirmation
-        ) {
-            Button(loc.L("delete"), role: .destructive) {
-                guard let app = selectedApp else { return }
-                Task {
-                    let result = await fileRemover.removeApp(
-                        app,
-                        includeApp: includeAppInDeletion,
-                        moveToTrash: moveToTrash
-                    )
-                    await MainActor.run {
-                        deleteResult = result
-                        showingResultAlert = true
-                        
-                        // 如果删除了应用本身且成功，清除选中状态并刷新列表
-                        if includeAppInDeletion && result.failedCount == 0 {
-                            selectedApp = nil
-                            Task { await appScanner.scanApplications() }
-                        } else {
-                            // 否则只刷新残留文件
-                             Task {
-                                 let residuals = await residualScanner.scanResidualFiles(for: app)
-                                 await MainActor.run { app.residualFiles = residuals }
-                             }
-                        }
-                    }
-                }
-            }
-            Button(loc.L("cancel"), role: .cancel) {}
-        } message: {
-            if let app = selectedApp {
-                Text(includeAppInDeletion
-                     ? "确定要删除 \(app.name) 及其所有残留文件吗？\n此操作\(moveToTrash ? "会将文件移至废纸篓" : "不可撤销")。"
-                     : "确定要删除 \(app.name) 的残留文件吗？\n此操作\(moveToTrash ? "会将文件移至废纸篓" : "不可撤销")。")
-            }
-        }
-        .alert(loc.L("clean_complete"), isPresented: $showingResultAlert) {
-            Button(loc.L("confirm"), role: .cancel) {}
-        } message: {
-            if let result = deleteResult {
-                Text("成功删除 \(result.successCount) 个项目\n释放空间: \(ByteCountFormatter.string(fromByteCount: result.totalSizeRemoved, countStyle: .file))")
-            }
-        }
+        AppUninstallerView(appScanner: appScanner)
     }
 }
 

@@ -58,7 +58,7 @@ class ScanServiceManager: ObservableObject {
         guard !deepCleanScanner.isScanning else { return }
         activeScans.insert(.deepClean)
         Task {
-            await deepCleanScanner.scan()
+            await deepCleanScanner.startScan()
             await MainActor.run {
                 activeScans.remove(.deepClean)
             }
@@ -133,7 +133,7 @@ class ScanServiceManager: ObservableObject {
                 group.addTask {
                     if !self.deepCleanScanner.isScanning {
                         await MainActor.run { self.activeScans.insert(.deepClean) }
-                        await self.deepCleanScanner.scan()
+                        await self.deepCleanScanner.startScan()
                         await MainActor.run { self.activeScans.remove(.deepClean) }
                     }
                 }
@@ -167,7 +167,7 @@ class ScanServiceManager: ObservableObject {
     var totalItemsFound: Int {
         junkCleaner.junkItems.count +
         largeFileScanner.foundFiles.count +
-        deepCleanScanner.orphanedItems.count +
+        deepCleanScanner.items.count +
         smartCleanerService.duplicateGroups.flatMap { $0.files }.count +
         smartCleanerService.localizationFiles.count
     }

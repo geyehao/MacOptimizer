@@ -54,16 +54,21 @@ class InstalledApp: Identifiable, ObservableObject, Hashable {
     let path: URL
     let bundleIdentifier: String?
     let icon: NSImage
+    let vendor: String // e.g. "Google", "Apple", or "Unknown"
+    let isAppStore: Bool
     @Published var size: Int64
     @Published var residualFiles: [ResidualFile] = []
     @Published var isScanning: Bool = false
+    @Published var isSelected: Bool = false
     
-    init(name: String, path: URL, bundleIdentifier: String?, icon: NSImage, size: Int64) {
+    init(name: String, path: URL, bundleIdentifier: String?, icon: NSImage, size: Int64, vendor: String = "Unknown", isAppStore: Bool = false) {
         self.name = name
         self.path = path
         self.bundleIdentifier = bundleIdentifier
         self.icon = icon
         self.size = size
+        self.vendor = vendor
+        self.isAppStore = isAppStore
     }
     
     var totalResidualSize: Int64 {

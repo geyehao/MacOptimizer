@@ -164,6 +164,23 @@ struct MonitorView: View {
                 }
                 .padding(20)
             } else {
+                // Header Row
+                HStack {
+                    Text(loc.currentLanguage == .chinese ? "名称" : "Name")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Text(loc.currentLanguage == .chinese ? "内存" : "Memory")
+                        .frame(width: 80, alignment: .trailing)
+                    Text("PID")
+                        .frame(width: 60, alignment: .trailing)
+                    Text("")
+                        .frame(width: 30)
+                }
+                .font(.caption)
+                .foregroundColor(.secondaryText)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(Color.white.opacity(0.05))
+                
                 ForEach(processService.processes) { item in
                     HStack {
                         if let icon = item.icon {
@@ -176,16 +193,24 @@ struct MonitorView: View {
                                 .frame(width: 24, height: 24)
                         }
                         
-                        VStack(alignment: .leading) {
-                            Text(item.name)
-                                .font(.system(size: 13, weight: .medium))
-                                .foregroundColor(.white)
-                            Text("PID: \(item.formattedPID)")
-                                .font(.caption)
-                                .foregroundColor(.white.opacity(0.4))
-                        }
+                        Text(item.name)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundColor(.white)
+                            .lineLimit(1)
                         
                         Spacer()
+                        
+                        // Memory Usage
+                        Text(item.formattedMemory)
+                            .font(.system(size: 12, weight: .medium, design: .monospaced))
+                            .foregroundColor(memoryColor(for: item.memoryUsage))
+                            .frame(width: 80, alignment: .trailing)
+                        
+                        // PID
+                        Text(item.formattedPID)
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundColor(.white.opacity(0.4))
+                            .frame(width: 60, alignment: .trailing)
                         
                         // Stop Button
                         Button(action: { processService.terminateProcess(item) }) {
@@ -194,6 +219,7 @@ struct MonitorView: View {
                         }
                         .buttonStyle(.plain)
                         .help(loc.L("stop_process"))
+                        .frame(width: 30)
                     }
                     .padding(12)
                     .background(Color.white.opacity(0.02))
@@ -209,6 +235,20 @@ struct MonitorView: View {
         }
         .background(Color.black.opacity(0.2))
         .cornerRadius(8)
+    }
+    
+    /// 根据内存使用量返回颜色
+    private func memoryColor(for bytes: Int64) -> Color {
+        let mb = bytes / (1024 * 1024)
+        if mb > 1000 { // > 1GB
+            return .red
+        } else if mb > 500 { // > 500MB
+            return .orange
+        } else if mb > 200 { // > 200MB
+            return .yellow
+        } else {
+            return .green
+        }
     }
     
     // MARK: - Port List View

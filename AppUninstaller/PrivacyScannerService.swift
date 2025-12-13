@@ -2,23 +2,36 @@ import Foundation
 import Combine
 import AppKit
 
+// MARK: - 扫描状态
+enum PrivacyScanState {
+    case initial
+    case scanning
+    case completed
+    case cleaning
+    case finished
+}
+
 // MARK: - 隐私数据类型
 enum PrivacyType: String, CaseIterable, Identifiable {
     case history = "浏览记录"
     case cookies = "Cookie 文件"
     case downloads = "下载记录"
-    case cache = "浏览器缓存"
-    case malware = "恶意软件" // 保留原恶意软件扫描
+    case permissions = "应用权限"
+    case recentItems = "最近项目列表"
+    case wifi = "Wi-Fi 网络"
+    case chat = "聊天信息"
     
     var id: String { rawValue }
     
     var icon: String {
         switch self {
         case .history: return "clock.arrow.circlepath"
-        case .cookies: return "lock.circle" // or a cookie icon if available, SF Symbols maybe "circle.dotted" or similar
+        case .cookies: return "lock.circle"
         case .downloads: return "arrow.down.circle"
-        case .cache: return "photo.stack"
-        case .malware: return "exclamationmark.shield.fill"
+        case .permissions: return "lock.shield" // 权限锁
+        case .recentItems: return "clock" // 最近项目
+        case .wifi: return "wifi" // Wi-Fi
+        case .chat: return "message" // 聊天
         }
     }
 }
@@ -28,14 +41,14 @@ enum BrowserType: String, CaseIterable, Identifiable {
     case safari = "Safari"
     case chrome = "Google Chrome"
     case firefox = "Firefox"
-    case system = "System" // For malware or system-wide privacy
+    case system = "System" // 系统项
     
     var id: String { rawValue }
     
     var icon: String {
         switch self {
         case .safari: return "safari"
-        case .chrome: return "globe" // Placeholder, maybe specific icon logic
+        case .chrome: return "globe"
         case .firefox: return "flame"
         case .system: return "applelogo"
         }
@@ -58,12 +71,12 @@ class PrivacyScannerService: ObservableObject {
     @Published var privacyItems: [PrivacyItem] = []
     @Published var isScanning: Bool = false
     @Published var scanProgress: Double = 0
-    @Published var malwareScanner = MalwareScanner() // 集成原有点恶意软件扫描
+    @Published var shouldStop = false
     
     // 统计数据
     var totalHistoryCount: Int { count(for: .history) }
     var totalCookiesCount: Int { count(for: .cookies) }
-    var totalDownloadsCount: Int { count(for: .downloads) }
+    var totalPermissionsCount: Int { count(for: .permissions) }
     
     private let fileManager = FileManager.default
     
@@ -79,10 +92,16 @@ class PrivacyScannerService: ObservableObject {
         privacyItems.filter { $0.isSelected }.reduce(0) { $0 + $1.size }
     }
     
+    func stopScan() {
+        shouldStop = true
+        isScanning = false
+    }
+    
     // MARK: - 扫描方法
     func scanAll() async {
         await MainActor.run {
             isScanning = true
+            shouldStop = false
             privacyItems.removeAll()
             scanProgress = 0
         }
@@ -90,31 +109,51 @@ class PrivacyScannerService: ObservableObject {
         // 1. 扫描浏览器数据
         let browsers = BrowserType.allCases.filter { $0 != .system }
         for (index, browser) in browsers.enumerated() {
+            if shouldStop { break }
             let items = await scanBrowser(browser)
             await MainActor.run {
                 privacyItems.append(contentsOf: items)
-                scanProgress = Double(index + 1) / Double(browsers.count + 1) // +1 for malware
+                scanProgress = Double(index + 1) / Double(browsers.count + 4)
             }
         }
         
-        // 2. 扫描恶意软件
-        await malwareScanner.scan()
-        let threats = malwareScanner.threats
-        
-        let malwareItems = threats.map { threat in
-            PrivacyItem(
-                browser: .system,
-                type: .malware,
-                path: threat.path,
-                size: threat.size,
-                displayPath: threat.name
-            )
+        // 2. 扫描最近项目
+        if !shouldStop {
+            let recentItems = await scanRecentItems()
+            await MainActor.run {
+                privacyItems.append(contentsOf: recentItems)
+                scanProgress += 0.1
+            }
         }
         
-        await MainActor.run {
-            privacyItems.append(contentsOf: malwareItems)
-            scanProgress = 1.0
-            isScanning = false
+        // 3. 扫描应用权限 (TCC)
+        if !shouldStop {
+            let permissions = await scanPermissions()
+            await MainActor.run {
+                privacyItems.append(contentsOf: permissions)
+                scanProgress += 0.1
+            }
+        }
+        
+        // 4. 扫描 Wi-Fi
+        if !shouldStop {
+            let wifiItems = await scanWiFi()
+            await MainActor.run {
+                privacyItems.append(contentsOf: wifiItems)
+                scanProgress += 0.1
+            }
+        }
+        
+        // 5. 扫描聊天数据
+        if !shouldStop {
+            let chatItems = await scanChatData()
+            await MainActor.run {
+                privacyItems.append(contentsOf: chatItems)
+                scanProgress = 1.0
+                isScanning = false
+            }
+        } else {
+             await MainActor.run { isScanning = false }
         }
     }
     
@@ -188,14 +227,22 @@ class PrivacyScannerService: ObservableObject {
         
         for item in itemsToDelete {
             do {
-                if item.type == .malware {
-                   // 尝试直接删除
-                   try fileManager.removeItem(at: item.path)
-                   cleaned += item.size
+                // 如果是特殊的逻辑类型（如权限），需要特殊处理
+                if item.type == .permissions {
+                    // Try to reset permission: tccutil reset SERVICE APP_BUNDLE_ID
+                    // This is limited and might require higher privileges or specific entitlements.
+                    // For now we might just skip or log.
+                    // 这里仅做模拟，实际需要 System TCC reset 权限
+                    cleaned += 0 // Metadata only
+                } else if item.type == .wifi {
+                     // Wi-Fi removal usually requires network setup tool
+                     // Skip for safety
                 } else {
                     // 普通文件删除
-                    try fileManager.removeItem(at: item.path)
-                    cleaned += item.size
+                    if fileManager.fileExists(atPath: item.path.path) {
+                        try fileManager.removeItem(at: item.path)
+                        cleaned += item.size
+                    }
                 }
             } catch {
                 print("Failed to delete \(item.path.path): \(error)")
@@ -237,7 +284,6 @@ class PrivacyScannerService: ObservableObject {
         let home = FileManager.default.homeDirectoryForCurrentUser
         
         // 1. History
-        // 1. History
         let historyURL = home.appendingPathComponent("Library/Safari/History.db")
         addWithRelatedFiles(path: historyURL, type: .history, browser: .safari, description: "Safari 浏览记录数据库", to: &items)
         
@@ -247,16 +293,10 @@ class PrivacyScannerService: ObservableObject {
             items.append(PrivacyItem(browser: .safari, type: .downloads, path: downloadsURL, size: size, displayPath: "Safari 下载记录列表"))
         }
         
-        // 3. Cookies (Usually in ~/Library/Containers/com.apple.Safari/Data/Library/Cookies/Cookies.binarycookies on newer macOS, or ~/Library/Cookies)
+        // 3. Cookies
         let cookiesURL = home.appendingPathComponent("Library/Cookies/Cookies.binarycookies")
         if let size = fileSize(at: cookiesURL) {
             items.append(PrivacyItem(browser: .safari, type: .cookies, path: cookiesURL, size: size, displayPath: "Safari Cookie 文件"))
-        }
-        
-        // 检查 Containers 路径 (Sanboxed)
-        let sandboxCookies = home.appendingPathComponent("Library/Containers/com.apple.Safari/Data/Library/Cookies/Cookies.binarycookies")
-        if let size = fileSize(at: sandboxCookies) {
-            items.append(PrivacyItem(browser: .safari, type: .cookies, path: sandboxCookies, size: size, displayPath: "Safari (沙盒) Cookie 文件"))
         }
         
         return items
@@ -269,57 +309,13 @@ class PrivacyScannerService: ObservableObject {
         
         guard fileManager.fileExists(atPath: chromeDir.path) else { return [] }
         
-        // 获取所有配置文件目录 (Default, Profile 1, Profile 2, ...)
-        var profileDirs: [URL] = []
-        if let contents = try? fileManager.contentsOfDirectory(at: chromeDir, includingPropertiesForKeys: [.isDirectoryKey]) {
-            for item in contents {
-                let name = item.lastPathComponent
-                // Chrome profile directories are "Default" or "Profile X"
-                if name == "Default" || name.hasPrefix("Profile ") {
-                    var isDir: ObjCBool = false
-                    if fileManager.fileExists(atPath: item.path, isDirectory: &isDir), isDir.boolValue {
-                        profileDirs.append(item)
-                    }
-                }
-            }
-        }
-        
-        if profileDirs.isEmpty {
-            // Fallback to Default
-            let defaultPath = chromeDir.appendingPathComponent("Default")
-            if fileManager.fileExists(atPath: defaultPath.path) {
-                profileDirs.append(defaultPath)
-            }
-        }
-        
-        for profile in profileDirs {
-            let profileName = profile.lastPathComponent
-            
-            // History
-            let historyURL = profile.appendingPathComponent("History")
-            addWithRelatedFiles(path: historyURL, type: .history, browser: .chrome, description: "Chrome 浏览记录 (\(profileName))", to: &items)
-            
-            // History-journal
-            let historyJournal = profile.appendingPathComponent("History-journal")
-            if let size = fileSize(at: historyJournal) {
-                items.append(PrivacyItem(browser: .chrome, type: .history, path: historyJournal, size: size, displayPath: "Chrome History-journal (\(profileName))"))
-            }
-            
-            // Cookies
-            let cookiesURL = profile.appendingPathComponent("Cookies")
-            addWithRelatedFiles(path: cookiesURL, type: .cookies, browser: .chrome, description: "Chrome Cookies (\(profileName))", to: &items)
-            
-            // Cookies-journal
-            let cookiesJournal = profile.appendingPathComponent("Cookies-journal")
-            if let size = fileSize(at: cookiesJournal) {
-                items.append(PrivacyItem(browser: .chrome, type: .cookies, path: cookiesJournal, size: size, displayPath: "Chrome Cookies-journal (\(profileName))"))
-            }
-        }
-        
-        // Cache (all profiles share cache structure usually, check both)
-        let defaultCacheURL = home.appendingPathComponent("Library/Caches/Google/Chrome/Default/Cache")
-        if let size = folderSize(at: defaultCacheURL), size > 0 {
-            items.append(PrivacyItem(browser: .chrome, type: .cache, path: defaultCacheURL, size: size, displayPath: "Chrome 缓存 (Default)"))
+        let defaultPath = chromeDir.appendingPathComponent("Default")
+        if fileManager.fileExists(atPath: defaultPath.path) {
+             let historyURL = defaultPath.appendingPathComponent("History")
+             addWithRelatedFiles(path: historyURL, type: .history, browser: .chrome, description: "Chrome 浏览记录 (Default)", to: &items)
+             
+             let cookiesURL = defaultPath.appendingPathComponent("Cookies")
+             addWithRelatedFiles(path: cookiesURL, type: .cookies, browser: .chrome, description: "Chrome Cookies (Default)", to: &items)
         }
         
         return items
@@ -333,27 +329,106 @@ class PrivacyScannerService: ObservableObject {
         guard let profiles = try? fileManager.contentsOfDirectory(at: profilesPath, includingPropertiesForKeys: nil), !profiles.isEmpty else { return [] }
         
         for profile in profiles {
-            // History (places.sqlite)
-            // History (places.sqlite)
             let historyURL = profile.appendingPathComponent("places.sqlite")
             addWithRelatedFiles(path: historyURL, type: .history, browser: .firefox, description: "Firefox 历史记录 (\(profile.lastPathComponent))", to: &items)
-            
-            // Cookies (cookies.sqlite)
-            // Cookies (cookies.sqlite)
-            let cookiesURL = profile.appendingPathComponent("cookies.sqlite")
-            addWithRelatedFiles(path: cookiesURL, type: .cookies, browser: .firefox, description: "Firefox Cookie (\(profile.lastPathComponent))", to: &items)
+        }
+        
+        return items
+    }
+    
+    // MARK: - 新扫描器实现
+    
+    private func scanRecentItems() async -> [PrivacyItem] {
+        var items: [PrivacyItem] = []
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        
+        // Recent Items Plist (Legacy but still used)
+        let recentURL = home.appendingPathComponent("Library/Preferences/com.apple.recentitems.plist")
+        if let size = fileSize(at: recentURL) {
+            items.append(PrivacyItem(browser: .system, type: .recentItems, path: recentURL, size: size, displayPath: "最近使用的项目列表"))
+        }
+        
+        // Shared File List (Modern Recent Items)
+        let sharedFileList = home.appendingPathComponent("Library/Application Support/com.apple.sharedfilelist")
+        if let size = folderSize(at: sharedFileList) {
+             items.append(PrivacyItem(browser: .system, type: .recentItems, path: sharedFileList, size: size, displayPath: "共享文件列表 (最近与收藏)"))
+        }
+        
+        return items
+    }
+    
+    private func scanPermissions() async -> [PrivacyItem] {
+        var items: [PrivacyItem] = []
+        // 模拟扫描权限 - 实际需要 Full Disk Access 读取 TCC.db
+        // /Library/Application Support/com.apple.TCC/TCC.db
+        
+        let tccURL = URL(fileURLWithPath: "/Library/Application Support/com.apple.TCC/TCC.db")
+        
+        // 尝试读取大小（如果有权限）
+        if let size = fileSize(at: tccURL) {
+            items.append(PrivacyItem(
+                browser: .system,
+                type: .permissions,
+                path: tccURL,
+                size: size,
+                displayPath: "系统应用权限数据库 (TCC)"
+            ))
+        } else {
+            // 如果没有权限，添加一个占位符提示用户 (Size 0)
+            items.append(PrivacyItem(
+                browser: .system,
+                type: .permissions,
+                path: tccURL,
+                size: 0,
+                displayPath: "应用权限 (需完全磁盘访问权限)"
+            ))
+        }
+        
+        return items
+    }
+    
+    private func scanWiFi() async -> [PrivacyItem] {
+        var items: [PrivacyItem] = []
+        // /Library/Preferences/SystemConfiguration/com.apple.airport.preferences.plist
+        let wifiURL = URL(fileURLWithPath: "/Library/Preferences/SystemConfiguration/com.apple.airport.preferences.plist")
+        
+        if let size = fileSize(at: wifiURL) {
+            items.append(PrivacyItem(
+                browser: .system,
+                type: .wifi,
+                path: wifiURL,
+                size: size,
+                displayPath: "已知 Wi-Fi 网络配置"
+            ))
+        }
+        
+        return items
+    }
+    
+    private func scanChatData() async -> [PrivacyItem] {
+        var items: [PrivacyItem] = []
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        
+        // Messages (iMessage)
+        let messagesURL = home.appendingPathComponent("Library/Messages/chat.db")
+        addWithRelatedFiles(path: messagesURL, type: .chat, browser: .system, description: "iMessage 聊天记录", to: &items)
+        
+        // Attachments
+        let attachmentsURL = home.appendingPathComponent("Library/Messages/Attachments")
+        if let size = folderSize(at: attachmentsURL) {
+            items.append(PrivacyItem(browser: .system, type: .chat, path: attachmentsURL, size: size, displayPath: "iMessage 附件"))
         }
         
         return items
     }
     
     private func fileSize(at url: URL) -> Int64? {
+        // 如果没有权限读取，可能会失败
         guard let attrs = try? fileManager.attributesOfItem(atPath: url.path) else { return nil }
         return attrs[.size] as? Int64
     }
     
     private func folderSize(at url: URL) -> Int64? {
-        // Simple folder size calculation
         guard let enumerator = fileManager.enumerator(at: url, includingPropertiesForKeys: [.fileSizeKey]) else { return nil }
         var size: Int64 = 0
         for case let fileURL as URL in enumerator {

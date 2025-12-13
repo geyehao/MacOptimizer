@@ -15,6 +15,9 @@ enum OptimizationType: String, CaseIterable, Identifiable {
     case clearRecentItems = "清除最近使用记录"
     case restartFinder = "重启 Finder"
     case restartDock = "重启 Dock"
+    case freePurgeableSpace = "释放可清除空间"
+    case speedUpMail = "加速邮件"
+    case timeMachineThinning = "时间机器快照瘦身"
     
     var id: String { rawValue }
     
@@ -31,6 +34,9 @@ enum OptimizationType: String, CaseIterable, Identifiable {
         case .clearRecentItems: return "clock.arrow.circlepath"
         case .restartFinder: return "folder"
         case .restartDock: return "dock.rectangle"
+        case .freePurgeableSpace: return "server.rack"
+        case .speedUpMail: return "envelope"
+        case .timeMachineThinning: return "camera.on.rectangle"
         }
     }
     
@@ -47,12 +53,15 @@ enum OptimizationType: String, CaseIterable, Identifiable {
         case .clearRecentItems: return "清除 Finder 最近使用的文件记录"
         case .restartFinder: return "重启 Finder 解决卡顿问题"
         case .restartDock: return "重启 Dock 解决图标显示问题"
+        case .freePurgeableSpace: return "清理系统可清除空间"
+        case .speedUpMail: return "优化邮件数据库性能"
+        case .timeMachineThinning: return "清理旧的时间机器本地快照"
         }
     }
     
     var requiresAdmin: Bool {
         switch self {
-        case .rebuildSpotlight, .rebuildLaunchServices, .repairPermissions, .flushDNS:
+        case .rebuildSpotlight, .rebuildLaunchServices, .repairPermissions, .flushDNS, .timeMachineThinning, .freePurgeableSpace:
             return true
         default:
             return false
@@ -83,6 +92,12 @@ enum OptimizationType: String, CaseIterable, Identifiable {
             return "killall Finder"
         case .restartDock:
             return "killall Dock"
+        case .freePurgeableSpace:
+            return "tmutil thinlocalsnapshots / 1000000000 1" // 1GB, urgency 1
+        case .speedUpMail:
+            return "find ~/Library/Mail -name 'Envelope Index' -exec sqlite3 {} vacuum \\;"
+        case .timeMachineThinning:
+            return "tmutil thinlocalsnapshots / 100000000000 4" // 100GB, urgency 4
         }
     }
 }
@@ -244,7 +259,8 @@ class SystemOptimizer: ObservableObject {
             message = "剪贴板已清空"
             
         case .freeMemory, .flushDNS, .rebuildSpotlight, .rebuildLaunchServices, 
-             .clearFontCache, .repairPermissions, .clearRecentItems, .restartFinder, .restartDock:
+             .clearFontCache, .repairPermissions, .clearRecentItems, .restartFinder, .restartDock,
+             .freePurgeableSpace, .speedUpMail, .timeMachineThinning:
             
             if type.requiresAdmin {
                 let result = await executeWithAdminPrivileges(type.command)
@@ -278,6 +294,9 @@ class SystemOptimizer: ObservableObject {
         case .clearRecentItems: return "最近使用记录已清除"
         case .restartFinder: return "Finder 已重启"
         case .restartDock: return "Dock 已重启"
+        case .freePurgeableSpace: return "可清除空间已释放"
+        case .speedUpMail: return "邮件数据库已优化"
+        case .timeMachineThinning: return "时间机器快照已清理"
         }
     }
     

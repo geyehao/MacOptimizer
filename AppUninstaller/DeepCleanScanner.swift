@@ -1,14 +1,14 @@
 import SwiftUI
+import Combine
 
 // MARK: - Models
 
-struct OrphanedItem: Identifiable {
+struct DeepCleanItem: Identifiable, Sendable {
     let id = UUID()
     let url: URL
     let name: String
-    let bundleId: String?
     let size: Int64
-    let type: OrphanedType
+    let category: DeepCleanCategory
     var isSelected: Bool = true
     
     var formattedSize: String {
@@ -16,33 +16,40 @@ struct OrphanedItem: Identifiable {
     }
 }
 
-enum OrphanedType: String, CaseIterable {
-    case applicationSupport = "应用支持"
-    case caches = "缓存文件"
-    case preferences = "偏好设置"
-    case containers = "沙盒容器"
-    case savedState = "保存状态"
-    case logs = "日志文件"
+enum DeepCleanCategory: String, CaseIterable, Sendable {
+    case largeFiles = "Large Files"
+    case junkFiles = "System Junk"
+    case systemLogs = "Log Files"
+    case systemCaches = "Cache Files"
+    case appResiduals = "App Residue"
+    
+    var localizedName: String {
+        switch self {
+        case .largeFiles: return LocalizationManager.shared.currentLanguage == .chinese ? "大文件" : "Large Files"
+        case .junkFiles: return LocalizationManager.shared.currentLanguage == .chinese ? "系统垃圾" : "System Junk"
+        case .systemLogs: return LocalizationManager.shared.currentLanguage == .chinese ? "日志文件" : "Log Files"
+        case .systemCaches: return LocalizationManager.shared.currentLanguage == .chinese ? "缓存文件" : "Cache Files"
+        case .appResiduals: return LocalizationManager.shared.currentLanguage == .chinese ? "应用残留" : "App Residue"
+        }
+    }
     
     var icon: String {
         switch self {
-        case .applicationSupport: return "folder.fill"
-        case .caches: return "externaldrive.fill"
-        case .preferences: return "gearshape.fill"
-        case .containers: return "shippingbox.fill"
-        case .savedState: return "doc.fill"
-        case .logs: return "doc.text.fill"
+        case .largeFiles: return "arrow.down.doc.fill"
+        case .junkFiles: return "trash.fill"
+        case .systemLogs: return "doc.text.fill"
+        case .systemCaches: return "externaldrive.fill"
+        case .appResiduals: return "exclamationmark.triangle.fill"
         }
     }
     
     var color: Color {
         switch self {
-        case .applicationSupport: return .blue
-        case .caches: return .orange
-        case .preferences: return .purple
-        case .containers: return .green
-        case .savedState: return .cyan
-        case .logs: return .gray
+        case .largeFiles: return .purple
+        case .junkFiles: return .red
+        case .systemLogs: return .gray
+        case .systemCaches: return .blue
+        case .appResiduals: return .orange
         }
     }
 }
@@ -50,205 +57,318 @@ enum OrphanedType: String, CaseIterable {
 // MARK: - Scanner
 
 class DeepCleanScanner: ObservableObject {
-    @Published var orphanedItems: [OrphanedItem] = []
+    @Published var items: [DeepCleanItem] = []
     @Published var isScanning = false
-    @Published var scanProgress: String = ""
+    @Published var isCleaning = false
+    @Published var scanProgress: Double = 0.0
+    @Published var scanStatus: String = ""
+    @Published var currentScanningUrl: String = ""
+    @Published var completedCategories: Set<DeepCleanCategory> = []
+    
+    // 统计数据
     @Published var totalSize: Int64 = 0
+    @Published var cleanedSize: Int64 = 0
+    @Published var cleaningProgress: Double = 0.0
+    @Published var currentCleaningItem: String = ""
+    
+    // 选中的大小
+    var selectedSize: Int64 {
+        items.filter { $0.isSelected }.reduce(0) { $0 + $1.size }
+    }
+    
+    var selectedCount: Int {
+        items.filter { $0.isSelected }.count
+    }
     
     private let fileManager = FileManager.default
-    private var installedBundleIds: Set<String> = []
+    private var scanTask: Task<Void, Never>?
     
-    // 系统保护列表 - 不扫描这些
-    private let systemPrefixes = [
-        "com.apple.",
-        "com.microsoft.",
-        "group.com.apple.",
-        "Apple",
-        ".DS_Store",
-        ".localized",
-        "CloudKit",
-        "CoreData",
-        "Accounts",
-        "AddressBook",
-        "Calendar",
-        "Cookies",
-        "GameKit",
-        "HomeKit",
-        "KeyboardServices",
-        "Keychains",
-        "Mail",
-        "Messages",
-        "Safari",
-        "Passes",
-        "Photos",
-        "SyncedPreferences",
-        "Ubiquity"
+    // 系统保护 - 绝对不删
+    private let protectedPaths: Set<String> = [
+        "/System",
+        "/bin",
+        "/sbin",
+        "/usr",
+        "/var/root"
     ]
     
-    private let systemExactMatches = [
-        "com.apple",
-        "Accessibility",
-        "Accounts",
-        "Assistant",
-        "Audio",
-        "Bluetooth",
-        "ColorPickers",
-        "CoreDAV",
-        "CoreData",
-        "Dictionaries",
-        "FaceTime",
-        "FileProvider",
-        "FontCollections",
-        "Fonts",
-        "FrontBoard",
-        "GameKit",
-        "GeoServices",
-        "Google", // Google apps 通常用户会安装
-        "HTTPStorages",
-        "IdentityServices",
-        "Input Methods",
-        "Internet Plug-Ins",
-        "iTunes",
-        "Keyboard Layouts",
-        "Keyboard",
-        "LaunchAgents",
-        "LaunchDaemons",
-        "Managed Web Domains",
-        "Media",
-        "Metadata",
-        "Mobile Documents",
-        "News",
-        "Passes",
-        "Preferences",
-        "PrivateFrameworks",
-        "QuickLook",
-        "Reminders",
-        "Screen Savers",
-        "ScreenRecordings",
-        "Scripts",
-        "Sounds",
-        "Speech",
-        "Spelling",
-        "Spotlight",
-        "StatusBarApps",
-        "Suggestions",
-        "Widgets"
-    ]
+    // MARK: - API
     
-    func scan() async {
+    func startScan() async {
         await MainActor.run {
-            isScanning = true
-            orphanedItems = []
-            totalSize = 0
-            scanProgress = "正在获取已安装应用列表..."
+            self.reset()
+            self.isScanning = true
+            self.scanStatus = LocalizationManager.shared.currentLanguage == .chinese ? "准备扫描..." : "Preparing..."
+            self.scanProgress = 0.05 // Initial small progress
         }
         
-        // 1. 获取已安装应用的 Bundle IDs
-        installedBundleIds = await getInstalledBundleIds()
+        // 并发扫描所有类别
+        await withTaskGroup(of: (DeepCleanCategory, [DeepCleanItem]).self) { group in
+            
+            // 1. 扫描大文件 (User Home + Applications)
+            group.addTask {
+                await self.updateStatus(LocalizationManager.shared.currentLanguage == .chinese ? "正在扫描大文件..." : "Scanning Large Files...", category: .largeFiles)
+                let items = await self.scanLargeFiles()
+                return (.largeFiles, items)
+            }
+            
+            // 2. 扫描日志 (Logs)
+            group.addTask {
+                await self.updateStatus(LocalizationManager.shared.currentLanguage == .chinese ? "正在扫描日志..." : "Scanning Logs...", category: .systemLogs)
+                let items = await self.scanLogs()
+                return (.systemLogs, items)
+            }
+            
+            // 3. 扫描缓存 (Caches)
+            group.addTask {
+                await self.updateStatus(LocalizationManager.shared.currentLanguage == .chinese ? "正在扫描缓存..." : "Scanning Caches...", category: .systemCaches)
+                let items = await self.scanCaches()
+                return (.systemCaches, items)
+            }
+            
+            // 4. 扫描应用残留 (Containers/Support)
+            group.addTask {
+                await self.updateStatus(LocalizationManager.shared.currentLanguage == .chinese ? "正在扫描应用残留..." : "Scanning Leftovers...", category: .appResiduals)
+                let items = await self.scanResiduals()
+                return (.appResiduals, items)
+            }
+            
+            // 5. 扫描系统垃圾 (Junk, Trash, Downloads, etc)
+            group.addTask {
+                await self.updateStatus(LocalizationManager.shared.currentLanguage == .chinese ? "正在扫描系统垃圾..." : "Scanning Junk...", category: .junkFiles)
+                let items = await self.scanJunk()
+                return (.junkFiles, items)
+            }
+            
+            // 收集结果 (Incremental Updates)
+            var completedTasks = 0
+            let totalTasks = 5.0
+            
+            for await (category, result) in group {
+                completedTasks += 1
+                
+                await MainActor.run {
+                    // Mark category as complete
+                    self.completedCategories.insert(category)
+                    
+                    // Update items immediately
+                    self.items.append(contentsOf: result)
+                    
+                    // Update total size immediately
+                    let newSize = result.reduce(0) { $0 + $1.size }
+                    self.totalSize += newSize
+                    
+                    // Update progress
+                    withAnimation(.linear(duration: 0.5)) {
+                        self.scanProgress = Double(completedTasks) / totalTasks
+                    }
+                    
+                    // Sort items immediately so UI looks correct
+                    self.items.sort { $0.size > $1.size }
+                    
+                    // Clear scanning URL
+                    self.currentScanningUrl = "" 
+                }
+            }
+            
+            await MainActor.run {
+                self.isScanning = false
+                self.scanStatus = LocalizationManager.shared.currentLanguage == .chinese ? "扫描完成" : "Scan Complete"
+                self.scanProgress = 1.0
+            }
+        }
+    }
+    
+    // Throttled UI Update Helper
+    private var lastUpdateTime: Date = Date()
+    
+    func updateScanningUrl(_ url: String) {
+        let now = Date()
+        guard now.timeIntervalSince(lastUpdateTime) > 0.05 else { return } // Update every 50ms max
+        lastUpdateTime = now
         
-        let homeDir = fileManager.homeDirectoryForCurrentUser
-        let libraryURL = homeDir.appendingPathComponent("Library")
+        Task { @MainActor in
+            self.currentScanningUrl = url
+        }
+    }
+    
+    func stopScan() {
+        scanTask?.cancel()
+        isScanning = false
+    }
+    
+    func cleanSelected() async -> (count: Int, size: Int64) {
+        await MainActor.run {
+            self.isCleaning = true
+            self.scanStatus = LocalizationManager.shared.currentLanguage == .chinese ? "正在清理..." : "Cleaning..."
+            self.cleaningProgress = 0
+        }
         
-        // 2. 定义扫描任务
-        let scanTasks: [(URL, OrphanedType)] = [
-            (libraryURL.appendingPathComponent("Application Support"), .applicationSupport),
-            (libraryURL.appendingPathComponent("Caches"), .caches),
-            (libraryURL.appendingPathComponent("Preferences"), .preferences),
-            (libraryURL.appendingPathComponent("Containers"), .containers),
-            (libraryURL.appendingPathComponent("Group Containers"), .containers),
-            (libraryURL.appendingPathComponent("Saved Application State"), .savedState),
-            (libraryURL.appendingPathComponent("Logs"), .logs)
+        let selectedItems = items.filter { $0.isSelected }
+        var deletedCount = 0
+        var deletedSize: Int64 = 0
+        var failures: [URL] = []
+        let totalItems = selectedItems.count
+        
+        for (index, item) in selectedItems.enumerated() {
+            // Update progress for each item
+            await MainActor.run {
+                self.currentCleaningItem = item.name
+                self.scanStatus = LocalizationManager.shared.currentLanguage == .chinese ?
+                    "正在清理: \(item.name)" : "Cleaning: \(item.name)"
+                self.cleaningProgress = Double(index) / Double(totalItems)
+            }
+            
+            do {
+                // Use trashItem for safety (moves to Trash instead of permanent delete)
+                try fileManager.trashItem(at: item.url, resultingItemURL: nil)
+                deletedCount += 1
+                deletedSize += item.size
+            } catch {
+                print("Delete failed for \(item.url): \(error.localizedDescription)")
+                failures.append(item.url)
+            }
+        }
+        
+        let finalDeletedSize = deletedSize
+        let finalDeletedCount = deletedCount
+        
+        await MainActor.run {
+            self.items.removeAll { item in
+                selectedItems.contains(where: { $0.id == item.id }) && !failures.contains(item.url)
+            }
+            self.cleanedSize = finalDeletedSize
+            self.totalSize -= finalDeletedSize
+            self.isCleaning = false
+            self.cleaningProgress = 1.0
+            self.currentCleaningItem = ""
+            self.scanStatus = LocalizationManager.shared.currentLanguage == .chinese ? "清理完成" : "Cleanup Complete"
+        }
+        
+        return (finalDeletedCount, finalDeletedSize)
+    }
+    
+    func reset() {
+        items = []
+        totalSize = 0
+        cleanedSize = 0
+        scanProgress = 0
+        scanStatus = ""
+        currentScanningUrl = ""
+        completedCategories = []
+    }
+    
+    // MARK: - Helper Methods
+    
+    private func updateStatus(_ status: String, category: DeepCleanCategory? = nil) async {
+        await MainActor.run {
+            self.scanStatus = status
+        }
+    }
+    
+    // MARK: - Scanning Implementations
+    
+    private func scanLargeFiles() async -> [DeepCleanItem] {
+        // SAFETY: Only scan user's home directory, NEVER /Applications
+        let home = fileManager.homeDirectoryForCurrentUser
+        let scanRoots = [
+            home.appendingPathComponent("Downloads"),
+            home.appendingPathComponent("Desktop"),
+            home.appendingPathComponent("Documents"),
+            home.appendingPathComponent("Movies"),
+            home.appendingPathComponent("Music")
         ]
         
-        let totalTasks = scanTasks.count
-        let progressTracker = ScanProgressTracker()
-        await progressTracker.setTotalTasks(totalTasks)
+        // SAFETY: Exclude Library entirely to protect app data
+        let config = ScanConfiguration(
+            minFileSize: 50 * 1024 * 1024, // 50MB
+            skipHiddenFiles: true,
+            excludedPaths: ["Library", ".Trash", "Applications", ".app"] // NEVER touch apps
+        )
         
-        // 3. 使用 TaskGroup 并行扫描所有目录
-        var allItems: [OrphanedItem] = []
-        
-        await withTaskGroup(of: (OrphanedType, [OrphanedItem]).self) { group in
-            for (url, type) in scanTasks {
-                group.addTask {
-                    await self.updateScanProgress("正在扫描 \(type.rawValue)...")
-                    let items = await self.scanDirectoryConcurrent(url, type: type)
-                    return (type, items)
-                }
+        let results = await scanDirectoryConcurrently(directories: scanRoots, configuration: config) { url, values -> DeepCleanItem? in
+            // SAFETY: Skip .app bundles and application-related files
+            if url.path.contains(".app") || 
+               url.path.contains("/Applications/") ||
+               url.path.contains("/Library/") {
+                return nil
             }
             
-            // 收集结果并更新进度
-            for await (_, items) in group {
-                allItems.append(contentsOf: items)
-                await progressTracker.completeTask()
-                
-                let progress = await progressTracker.getProgress()
-                await MainActor.run {
-                    // 显示进度（可以用于 UI 进度条）
-                    _ = progress
-                }
+            return DeepCleanItem(
+                url: url,
+                name: url.lastPathComponent,
+                size: Int64(values.fileSize ?? 0),
+                category: .largeFiles
+            )
+        }
+        
+        return results
+    }
+    
+    private func scanLogs() async -> [DeepCleanItem] {
+        var logDirs = [URL]()
+        
+        // User Logs
+        let userLogs = fileManager.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs")
+        logDirs.append(userLogs)
+        
+        // System Logs (Requires permission, might fail for some)
+        logDirs.append(URL(fileURLWithPath: "/Library/Logs"))
+        logDirs.append(URL(fileURLWithPath: "/private/var/log"))
+        
+        let config = ScanConfiguration(
+            minFileSize: 0,
+            skipHiddenFiles: false
+        )
+        
+        return await scanDirectoryConcurrently(directories: logDirs, configuration: config) { url, values in
+            // UI Update
+            self.updateScanningUrl(url.path)
+            
+            if url.pathExtension == "log" || url.path.contains("/Logs/") {
+                return DeepCleanItem(
+                    url: url,
+                    name: url.lastPathComponent,
+                    size: Int64(values.fileSize ?? 0),
+                    category: .systemLogs
+                )
             }
-        }
-        
-        // 4. 计算总大小
-        var total: Int64 = 0
-        for item in allItems {
-            total += item.size
-        }
-        
-        // 按大小排序
-        let sortedItems = allItems.sorted { $0.size > $1.size }
-        
-        await MainActor.run {
-            orphanedItems = sortedItems
-            totalSize = total
-            isScanning = false
-            scanProgress = ""
+            return nil
         }
     }
     
-    private func updateScanProgress(_ message: String) async {
-        await MainActor.run {
-            scanProgress = message
-        }
-    }
-    
-    /// 并发扫描目录 - 优化版
-    private func scanDirectoryConcurrent(_ url: URL, type: OrphanedType) async -> [OrphanedItem] {
-        guard fileManager.fileExists(atPath: url.path) else { return [] }
+    private func scanCaches() async -> [DeepCleanItem] {
+        var cacheDirs = [URL]()
         
-        do {
-            let contents = try fileManager.contentsOfDirectory(at: url, includingPropertiesForKeys: [.isDirectoryKey])
+        // User Caches
+        let userCaches = fileManager.homeDirectoryForCurrentUser.appendingPathComponent("Library/Caches")
+        cacheDirs.append(userCaches)
+        
+        // System Caches
+        cacheDirs.append(URL(fileURLWithPath: "/Library/Caches"))
+        
+        // 这里我们只扫描顶级文件夹或大文件，避免列出数百万个小缓存文件
+        // 策略：列出 Caches 下的一级子文件夹，计算其大小，作为一个 Item
+        var items: [DeepCleanItem] = []
+        
+        for dir in cacheDirs {
+            guard let contents = try? fileManager.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) else { continue }
             
-            // 使用 TaskGroup 并发处理每个子项
-            var items: [OrphanedItem] = []
-            
-            await withTaskGroup(of: OrphanedItem?.self) { group in
-                for itemURL in contents {
+            await withTaskGroup(of: DeepCleanItem?.self) { group in
+                for url in contents {
                     group.addTask {
-                        let itemName = itemURL.lastPathComponent
-                        
-                        // 跳过系统文件
-                        if self.isSystemItem(itemName) {
-                            return nil
+                        // UI Update
+                        await MainActor.run {
+                            self.updateScanningUrl(url.path)
                         }
                         
-                        // 跳过已安装应用的文件
-                        if self.isInstalledApp(itemName) {
-                            return nil
-                        }
-                        
-                        // 并发计算大小
-                        let size = await self.calculateSizeAsync(at: itemURL)
-                        
-                        // 只添加有一定大小的项目 (>100KB)
-                        if size > 100 * 1024 {
-                            let bundleId = self.extractBundleId(from: itemName)
-                            return OrphanedItem(
-                                url: itemURL,
-                                name: self.formatDisplayName(itemName),
-                                bundleId: bundleId,
+                        let size = await calculateSizeAsync(at: url)
+                        if size > 1024 * 1024 { // > 1MB
+                            return DeepCleanItem(
+                                url: url,
+                                name: url.lastPathComponent,
                                 size: size,
-                                type: type
+                                category: .systemCaches
                             )
                         }
                         return nil
@@ -261,69 +381,61 @@ class DeepCleanScanner: ObservableObject {
                     }
                 }
             }
-            
-            return items
-        } catch {
-            return []
         }
+        
+        return items
     }
     
-    /// 异步并发计算目录大小
-    private func calculateSizeAsync(at url: URL) async -> Int64 {
-        var totalSize: Int64 = 0
-        var isDirectory: ObjCBool = false
+    private func scanResiduals() async -> [DeepCleanItem] {
+        // ⚠️ SAFETY: Disabled due to risk of damaging installed applications.
+        // This feature incorrectly flagged Chrome and other apps as "residuals".
+        // TODO: Implement proper app detection that compares bundle IDs, not folder names.
+        print("[DeepClean] scanResiduals DISABLED for safety")
+        return []
+    }
+    
+    private func scanJunk() async -> [DeepCleanItem] {
+        // Trash, Downloads (Older than X?), Xcode DerivedData
+        let home = fileManager.homeDirectoryForCurrentUser
+        let trash = home.appendingPathComponent(".Trash")
         
-        guard fileManager.fileExists(atPath: url.path, isDirectory: &isDirectory) else { return 0 }
+        var items: [DeepCleanItem] = []
         
-        if isDirectory.boolValue {
-            // 收集所有文件
-            guard let enumerator = fileManager.enumerator(
-                at: url,
-                includingPropertiesForKeys: [.fileSizeKey],
-                options: [.skipsHiddenFiles]
-            ) else { return 0 }
-            
-            var fileURLs: [URL] = []
-            for case let fileURL as URL in enumerator {
-                fileURLs.append(fileURL)
-            }
-            
-            // 分块并发计算
-            let chunkSize = max(50, fileURLs.count / 4)
-            let chunks = stride(from: 0, to: fileURLs.count, by: chunkSize).map {
-                Array(fileURLs[$0..<min($0 + chunkSize, fileURLs.count)])
-            }
-            
-            await withTaskGroup(of: Int64.self) { group in
-                for chunk in chunks {
-                    group.addTask {
-                        var chunkTotal: Int64 = 0
-                        for fileURL in chunk {
-                            if let values = try? fileURL.resourceValues(forKeys: [.fileSizeKey]),
-                               let size = values.fileSize {
-                                chunkTotal += Int64(size)
-                            }
-                        }
-                        return chunkTotal
-                    }
-                }
-                
-                for await size in group {
-                    totalSize += size
-                }
-            }
-        } else {
-            if let attributes = try? fileManager.attributesOfItem(atPath: url.path),
-               let size = attributes[.size] as? UInt64 {
-                totalSize = Int64(size)
+        // Scan Trash
+        updateScanningUrl(trash.path)
+        let trashSize = await calculateSizeAsync(at: trash)
+        if trashSize > 0 {
+            items.append(DeepCleanItem(
+                url: trash,
+                name: LocalizationManager.shared.currentLanguage == .chinese ? "废纸篓" : "Trash",
+                size: trashSize,
+                category: .junkFiles
+            ))
+        }
+        
+        // Xcode DerivedData
+        let developer = home.appendingPathComponent("Library/Developer/Xcode/DerivedData")
+        if fileManager.fileExists(atPath: developer.path) {
+            updateScanningUrl(developer.path)
+            let size = await calculateSizeAsync(at: developer)
+             if size > 0 {
+                items.append(DeepCleanItem(
+                    url: developer,
+                    name: "Xcode DerivedData",
+                    size: size,
+                    category: .junkFiles
+                ))
             }
         }
         
-        return totalSize
+        return items
     }
     
-    private func getInstalledBundleIds() async -> Set<String> {
-        var bundleIds = Set<String>()
+    // MARK: - App Helpers
+    
+    /// 获取已安装应用的标识符集合 (Bundle ID + Name)
+    private func getInstalledAppParams() async -> Set<String> {
+        var params = Set<String>()
         
         let appDirs = [
             "/Applications",
@@ -334,215 +446,71 @@ class DeepCleanScanner: ObservableObject {
         for dir in appDirs {
             guard let contents = try? fileManager.contentsOfDirectory(atPath: dir) else { continue }
             
-            for item in contents where item.hasSuffix(".app") {
-                let appPath = (dir as NSString).appendingPathComponent(item)
-                let plistPath = (appPath as NSString).appendingPathComponent("Contents/Info.plist")
-                
-                if let plist = NSDictionary(contentsOfFile: plistPath),
-                   let bundleId = plist["CFBundleIdentifier"] as? String {
-                    bundleIds.insert(bundleId.lowercased())
+            for item in contents {
+                if item.hasSuffix(".app") {
+                    // 添加应用名称 (去除后缀)
+                    let name = (item as NSString).deletingPathExtension
+                    params.insert(name.lowercased())
                     
-                    // 也添加应用名称的变体
-                    let appName = (item as NSString).deletingPathExtension
-                    bundleIds.insert(appName.lowercased())
+                    // 读取 Info.plist 获取 Bundle ID
+                    let appPath = (dir as NSString).appendingPathComponent(item)
+                    let plistPath = (appPath as NSString).appendingPathComponent("Contents/Info.plist")
+                    
+                    if let plistData = try? Data(contentsOf: URL(fileURLWithPath: plistPath)),
+                       let plist = try? PropertyListSerialization.propertyList(from: plistData, options: [], format: nil) as? [String: Any],
+                       let bundleId = plist["CFBundleIdentifier"] as? String {
+                        params.insert(bundleId.lowercased())
+                    }
                 }
             }
         }
         
-        return bundleIds
-    }
-    
-    private func scanDirectory(_ url: URL, type: OrphanedType) async -> [OrphanedItem] {
-        var items: [OrphanedItem] = []
-        
-        guard fileManager.fileExists(atPath: url.path) else { return items }
-        
-        do {
-            let contents = try fileManager.contentsOfDirectory(at: url, includingPropertiesForKeys: [.isDirectoryKey])
-            
-            for itemURL in contents {
-                let itemName = itemURL.lastPathComponent
-                
-                // 跳过系统文件
-                if isSystemItem(itemName) {
-                    continue
-                }
-                
-                // 跳过已安装应用的文件
-                if isInstalledApp(itemName) {
-                    continue
-                }
-                
-                // 计算大小
-                let size = calculateSize(at: itemURL)
-                
-                // 只添加有一定大小的项目 (>100KB)
-                if size > 100 * 1024 {
-                    let bundleId = extractBundleId(from: itemName)
-                    let item = OrphanedItem(
-                        url: itemURL,
-                        name: formatDisplayName(itemName),
-                        bundleId: bundleId,
-                        size: size,
-                        type: type
-                    )
-                    items.append(item)
-                }
-            }
-        } catch {
-            print("Error scanning \(url.path): \(error)")
+        // 添加常用系统标识符防止误删
+        let systemSafelist = ["com.apple", "cloudkit", "safari", "mail", "messages", "photos"]
+        for safe in systemSafelist {
+            params.insert(safe)
         }
         
-        return items
+        return params
     }
     
-    private func isSystemItem(_ name: String) -> Bool {
-        let lowercaseName = name.lowercased()
+    private func isAppInstalled(_ name: String, params: Set<String>) -> Bool {
+        let lowerName = name.lowercased()
         
-        // 检查前缀
-        for prefix in systemPrefixes {
-            if lowercaseName.hasPrefix(prefix.lowercased()) {
+        // 1. 直接匹配
+        if params.contains(lowerName) { return true }
+        
+        // 2. 也是常用模式：com.company.app
+        for param in params {
+            if lowerName.contains(param) || (param.count > 5 && lowerName.hasPrefix(param)) {
                 return true
             }
         }
         
-        // 检查精确匹配
-        for match in systemExactMatches {
-            if lowercaseName == match.lowercased() {
-                return true
-            }
-        }
-        
-        // 隐藏文件
-        if name.hasPrefix(".") {
-            return true
-        }
+        // 3. 检查是否是系统保留
+        if lowerName.starts(with: "com.apple.") { return true }
         
         return false
     }
+
     
-    private func isInstalledApp(_ name: String) -> Bool {
-        let lowercaseName = name.lowercased()
-            .replacingOccurrences(of: ".savedstate", with: "")
-            .replacingOccurrences(of: ".plist", with: "")
-            .replacingOccurrences(of: ".lockdownmode.plist", with: "")
-        
-        // 直接匹配
-        if installedBundleIds.contains(lowercaseName) {
-            return true
-        }
-        
-        // Bundle ID 匹配
-        for bundleId in installedBundleIds {
-            if lowercaseName.contains(bundleId) || bundleId.contains(lowercaseName) {
-                return true
-            }
-        }
-        
-        // 提取可能的应用名
-        let parts = lowercaseName.components(separatedBy: ".")
-        if let lastPart = parts.last, installedBundleIds.contains(lastPart) {
-            return true
-        }
-        
-        return false
-    }
-    
-    private func extractBundleId(from name: String) -> String? {
-        // 尝试从名称中提取 bundle id
-        if name.contains(".") && !name.hasPrefix(".") {
-            let cleanName = name
-                .replacingOccurrences(of: ".savedstate", with: "")
-                .replacingOccurrences(of: ".plist", with: "")
-            return cleanName
-        }
-        return nil
-    }
-    
-    private func formatDisplayName(_ name: String) -> String {
-        var displayName = name
-            .replacingOccurrences(of: ".savedstate", with: "")
-            .replacingOccurrences(of: ".plist", with: "")
-        
-        // 尝试从 bundle id 提取应用名
-        if displayName.contains(".") {
-            let parts = displayName.components(separatedBy: ".")
-            if let lastPart = parts.last, !lastPart.isEmpty {
-                displayName = lastPart.capitalized
-            }
-        }
-        
-        return displayName
-    }
-    
-    private func calculateSize(at url: URL) -> Int64 {
-        var totalSize: Int64 = 0
-        var isDirectory: ObjCBool = false
-        
-        if fileManager.fileExists(atPath: url.path, isDirectory: &isDirectory) {
-            if isDirectory.boolValue {
-                guard let enumerator = fileManager.enumerator(at: url, includingPropertiesForKeys: [.fileSizeKey]) else { return 0 }
-                for case let fileURL as URL in enumerator {
-                    do {
-                        let resourceValues = try fileURL.resourceValues(forKeys: [.fileSizeKey])
-                        totalSize += Int64(resourceValues.fileSize ?? 0)
-                    } catch { continue }
-                }
-            } else {
-                do {
-                    let attributes = try fileManager.attributesOfItem(atPath: url.path)
-                    totalSize = Int64(attributes[.size] as? UInt64 ?? 0)
-                } catch { return 0 }
-            }
-        }
-        return totalSize
-    }
-    
-    func toggleSelection(for item: OrphanedItem) {
-        if let index = orphanedItems.firstIndex(where: { $0.id == item.id }) {
-            orphanedItems[index].isSelected.toggle()
+    // Toggle Logic
+    func toggleSelection(for item: DeepCleanItem) {
+        if let idx = items.firstIndex(where: { $0.id == item.id }) {
+            items[idx].isSelected.toggle()
         }
     }
     
-    func selectAll() {
-        for i in orphanedItems.indices {
-            orphanedItems[i].isSelected = true
+    func selectItems(in category: DeepCleanCategory) {
+        for i in items.indices where items[i].category == category {
+            items[i].isSelected = true
         }
     }
     
-    func deselectAll() {
-        for i in orphanedItems.indices {
-            orphanedItems[i].isSelected = false
+    func deselectItems(in category: DeepCleanCategory) {
+        for i in items.indices where items[i].category == category {
+            items[i].isSelected = false
         }
-    }
-    
-    var selectedCount: Int {
-        orphanedItems.filter { $0.isSelected }.count
-    }
-    
-    var selectedSize: Int64 {
-        orphanedItems.filter { $0.isSelected }.reduce(0) { $0 + $1.size }
-    }
-    
-    func cleanSelected() async -> (count: Int, size: Int64) {
-        var removedCount = 0
-        var removedSize: Int64 = 0
-        
-        let selectedItems = orphanedItems.filter { $0.isSelected }
-        
-        for item in selectedItems {
-            do {
-                try fileManager.trashItem(at: item.url, resultingItemURL: nil)
-                removedCount += 1
-                removedSize += item.size
-            } catch {
-                print("Failed to remove \(item.url.path): \(error)")
-            }
-        }
-        
-        // 重新扫描
-        await scan()
-        
-        return (removedCount, removedSize)
     }
 }
+

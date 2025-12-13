@@ -65,12 +65,38 @@ class AppScanner: ObservableObject {
         // 计算应用大小
         let size = calculateDirectorySize(url)
         
+        // 检测是否为 App Store 应用
+        let maskingReceiptPath = url.appendingPathComponent("Contents/_MASReceipt/receipt")
+        let isAppStore = fileManager.fileExists(atPath: maskingReceiptPath.path)
+        
+        // 尝试获取厂商名
+        var vendor = "Unknown"
+        if let id = bundleIdentifier {
+            let components = id.components(separatedBy: ".")
+            if components.count >= 2 {
+                // e.g. com.google.chrome -> Google
+                let potentialVendor = components[1].capitalized
+                if potentialVendor != "Com" && potentialVendor != "Org" {
+                    vendor = potentialVendor
+                } else if components.count > 2 {
+                     vendor = components[2].capitalized
+                }
+            }
+        }
+        
+        // 修正特定厂商
+        if vendor == "Apple" || bundleIdentifier?.starts(with: "com.apple.") == true {
+            vendor = "Apple"
+        }
+        
         return InstalledApp(
             name: name,
             path: url,
             bundleIdentifier: bundleIdentifier,
             icon: icon,
-            size: size
+            size: size,
+            vendor: vendor,
+            isAppStore: isAppStore
         )
     }
     
@@ -103,6 +129,47 @@ class AppScanner: ObservableObject {
         // 使用NSWorkspace获取图标
         return await MainActor.run {
             NSWorkspace.shared.icon(forFile: url.path)
+        }
+    }
+    
+    /// 扫描应用的残留文件
+    func scanResidualFiles(for app: InstalledApp) async {
+        await MainActor.run { app.isScanning = true }
+        let scanner = ResidualFileScanner()
+        let files = await scanner.scanResidualFiles(for: app)
+        await MainActor.run {
+            app.residualFiles = files
+            // 默认选中所有残留文件
+            for file in files {
+                file.isSelected = true
+            }
+            app.isScanning = false
+        }
+    }
+    
+    /// 批量扫描多个应用的残留文件
+    func scanResidualFilesForApps(_ apps: [InstalledApp]) async {
+        await withTaskGroup(of: Void.self) { group in
+            for app in apps {
+                group.addTask {
+                    await self.scanResidualFiles(for: app)
+                }
+            }
+        }
+    }
+    
+    /// 移除已卸载的应用
+    func removeFromList(app: InstalledApp) async {
+        await MainActor.run {
+            apps.removeAll { $0.id == app.id }
+        }
+    }
+    
+    /// 移除多个已卸载的应用
+    func removeFromList(apps appsToRemove: [InstalledApp]) async {
+        let idsToRemove = Set(appsToRemove.map { $0.id })
+        await MainActor.run {
+            apps.removeAll { idsToRemove.contains($0.id) }
         }
     }
     
