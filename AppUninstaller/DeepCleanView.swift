@@ -356,7 +356,6 @@ struct DeepCleanView: View {
     func resultCategoryCard(for category: DeepCleanCategory) -> some View {
         let items = scanner.items.filter { $0.category == category }
         let size = items.reduce(0) { $0 + $1.size }
-        let count = items.count
         
         return VStack(spacing: 16) {
             ZStack {

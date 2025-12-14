@@ -411,7 +411,7 @@ struct TrashView: View {
         .confirmationDialog(loc.L("empty_trash"), isPresented: $showEmptyConfirmation) {
             Button(loc.L("empty_trash"), role: .destructive) {
                 Task {
-                    await scanner.emptyTrash()
+                    _ = await scanner.emptyTrash()
                     showCleaningFinished = true
                 }
             }

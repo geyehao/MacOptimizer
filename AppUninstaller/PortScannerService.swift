@@ -135,7 +135,7 @@ class PortScannerService: ObservableObject {
                 // 按端口号排序
                 items.sort { ($0.port ?? 0) < ($1.port ?? 0) }
                 
-                await MainActor.run {
+                await MainActor.run { [items] in
                     self.ports = items
                     self.isScanning = false
                 }

@@ -1049,7 +1049,7 @@ class SmartCleanerService: ObservableObject {
             guard fileManager.fileExists(atPath: url.path) else { continue }
             
             if let enumerator = fileManager.enumerator(at: url, includingPropertiesForKeys: [.fileSizeKey]) {
-                for case let fileURL as URL in enumerator {
+                while let fileURL = enumerator.nextObject() as? URL {
                     let ext = fileURL.pathExtension.lowercased()
                     if ["log", "txt", "crash", "diag"].contains(ext) || fileURL.lastPathComponent.contains("log") {
                         if let values = try? fileURL.resourceValues(forKeys: [.fileSizeKey]),
@@ -1078,7 +1078,7 @@ class SmartCleanerService: ObservableObject {
             return items
         }
         
-        for case let fileURL as URL in enumerator {
+        while let fileURL = enumerator.nextObject() as? URL {
             if let values = try? fileURL.resourceValues(forKeys: [.fileSizeKey, .isDirectoryKey]),
                let isDir = values.isDirectory, !isDir,
                let size = values.fileSize, size > 0 {
@@ -1167,7 +1167,7 @@ class SmartCleanerService: ObservableObject {
             sizeGroups[size]?.append(url)
         }
         
-        let totalFiles = allSizeResults.count
+        let _ = allSizeResults.count
         
         // 2. 筛选出同大小的文件组（潜在重复）
         let potentialDuplicates = sizeGroups.filter { $0.value.count > 1 }
@@ -1257,7 +1257,7 @@ class SmartCleanerService: ObservableObject {
             options: [.skipsHiddenFiles]
         ) else { return results }
         
-        for case let fileURL as URL in enumerator {
+        while let fileURL = enumerator.nextObject() as? URL {
             guard let values = try? fileURL.resourceValues(forKeys: [.fileSizeKey, .isDirectoryKey]),
                   let isDir = values.isDirectory, !isDir,
                   let size = values.fileSize, size > 1024 else { continue }
@@ -1284,7 +1284,7 @@ class SmartCleanerService: ObservableObject {
         
         // 收集所有图片
         if let enumerator = fileManager.enumerator(at: picturesDir, includingPropertiesForKeys: [.fileSizeKey]) {
-            for case let fileURL as URL in enumerator {
+            while let fileURL = enumerator.nextObject() as? URL {
                 let ext = fileURL.pathExtension.lowercased()
                 if ["jpg", "jpeg", "png", "heic", "heif", "tiff"].contains(ext) {
                     totalCount += 1
@@ -1294,12 +1294,12 @@ class SmartCleanerService: ObservableObject {
         
         // 计算图片特征
         if let enumerator = fileManager.enumerator(at: picturesDir, includingPropertiesForKeys: [.fileSizeKey]) {
-            for case let fileURL as URL in enumerator {
+            while let fileURL = enumerator.nextObject() as? URL {
                 let ext = fileURL.pathExtension.lowercased()
                 guard ["jpg", "jpeg", "png", "heic", "heif", "tiff"].contains(ext) else { continue }
                 
                 processedCount += 1
-                await MainActor.run {
+                await MainActor.run { [processedCount, totalCount] in
                     scanProgress = Double(processedCount) / Double(max(totalCount, 1))
                     currentScanPath = fileURL.lastPathComponent
                 }
@@ -1507,7 +1507,7 @@ class SmartCleanerService: ObservableObject {
             options: [.skipsHiddenFiles]
         ) else { return items }
         
-        for case let fileURL as URL in enumerator {
+        while let fileURL = enumerator.nextObject() as? URL {
             // 跳过 Library 等系统目录
             if fileURL.path.contains("/Library/") || fileURL.path.contains("/.git/") {
                 continue
@@ -1818,7 +1818,7 @@ class SmartCleanerService: ObservableObject {
             } else { totalFailed += 1 }
         }
         
-        await MainActor.run { cleanedCategories.insert(.systemJunk) }
+        await MainActor.run { _ = cleanedCategories.insert(.systemJunk) }
         
         // 2. 清理重复文件
         if !duplicateGroups.isEmpty {
@@ -1834,7 +1834,7 @@ class SmartCleanerService: ObservableObject {
                     } else { totalFailed += 1 }
                 }
             }
-            await MainActor.run { cleanedCategories.insert(.duplicates) }
+            await MainActor.run { _ = cleanedCategories.insert(.duplicates) }
         }
         
         // 3. 清理相似照片
@@ -1851,7 +1851,7 @@ class SmartCleanerService: ObservableObject {
                     } else { totalFailed += 1 }
                 }
             }
-            await MainActor.run { cleanedCategories.insert(.similarPhotos) }
+            await MainActor.run { _ = cleanedCategories.insert(.similarPhotos) }
         }
         
         // 4. 清理多语言本地化文件
@@ -1870,7 +1870,7 @@ class SmartCleanerService: ObservableObject {
                     totalSuccess += 1
                 } else { totalFailed += 1 }
             }
-            await MainActor.run { cleanedCategories.insert(.localizations) }
+            await MainActor.run { _ = cleanedCategories.insert(.localizations) }
         }
         
         // 5. 清理大文件
@@ -1885,7 +1885,7 @@ class SmartCleanerService: ObservableObject {
                     totalSuccess += 1
                 } else { totalFailed += 1 }
             }
-            await MainActor.run { cleanedCategories.insert(.largeFiles) }
+            await MainActor.run { _ = cleanedCategories.insert(.largeFiles) }
         }
         
         // 刷新所有数据

@@ -69,10 +69,7 @@ class SystemMonitorService: ObservableObject {
             if let output = String(data: data, encoding: .utf8) {
                 let lines = output.components(separatedBy: "\n")
                 var pageSize: UInt64 = 4096 // Default
-                var pagesFree: UInt64 = 0
                 var pagesActive: UInt64 = 0
-                var pagesInactive: UInt64 = 0
-                var pagesSpeculative: UInt64 = 0
                 var pagesWired: UInt64 = 0
                 var pagesCompressed: UInt64 = 0
                 
@@ -81,14 +78,8 @@ class SystemMonitorService: ObservableObject {
                         if let last = line.split(separator: " ").last, let size = UInt64(last) {
                             pageSize = size
                         }
-                    } else if line.contains("Pages free") {
-                        pagesFree = extractPageCount(line)
                     } else if line.contains("Pages active") {
                         pagesActive = extractPageCount(line)
-                    } else if line.contains("Pages inactive") {
-                        pagesInactive = extractPageCount(line)
-                    } else if line.contains("Pages speculative") {
-                        pagesSpeculative = extractPageCount(line)
                     } else if line.contains("Pages wired down") {
                         pagesWired = extractPageCount(line)
                     } else if line.contains("Pages occupied by compressor") {

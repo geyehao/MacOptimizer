@@ -29,11 +29,11 @@ enum SidebarSection: String, CaseIterable {
         case .protection:
             return [.privacy]
         case .speed:
-            return [.optimizer, .monitor]
+            return [.optimizer, .maintenance, .monitor]
         case .apps:
             return [.uninstaller]
         case .files:
-            return [.fileExplorer, .largeFiles]
+            return [.fileExplorer, .largeFiles, .shredder]
         }
     }
 }
@@ -68,19 +68,7 @@ struct NavigationSidebar: View {
                 
                 Spacer()
                 
-                // 语言切换按钮
-                Button(action: { localization.toggleLanguage() }) {
-                    HStack(spacing: 4) {
-                        Text(localization.currentLanguage.flag)
-                            .font(.system(size: 14))
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Color.white.opacity(0.1))
-                    .cornerRadius(6)
-                }
-                .buttonStyle(.plain)
-                .help(L("switch_language"))
+
             }
             .padding(.horizontal, 16)
             .padding(.top, 16)
@@ -120,7 +108,21 @@ struct NavigationSidebar: View {
             Spacer()
             
             // 底部版本信息
-            HStack {
+            HStack(spacing: 12) {
+                // 语言切换按钮 (移动到此处)
+                Button(action: { localization.toggleLanguage() }) {
+                    HStack(spacing: 4) {
+                        Text(localization.currentLanguage.flag)
+                            .font(.system(size: 14))
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.white.opacity(0.1))
+                    .cornerRadius(6)
+                }
+                .buttonStyle(.plain)
+                .help(L("switch_language"))
+                
                 VStack(alignment: .leading, spacing: 2) {
                     Text("v3.0.0")
                         .font(.system(size: 10))
@@ -175,7 +177,9 @@ struct SidebarMenuItem: View {
         case .uninstaller: return localization.currentLanguage == .chinese ? "卸载器" : "Uninstaller"
         case .deepClean: return localization.currentLanguage == .chinese ? "深度清理" : "Deep Clean"
         case .cleaner: return localization.currentLanguage == .chinese ? "系统垃圾" : "System Junk"
+        case .maintenance: return localization.currentLanguage == .chinese ? "维护" : "Maintenance"
         case .optimizer: return localization.currentLanguage == .chinese ? "优化" : "Optimization"
+        case .shredder: return localization.currentLanguage == .chinese ? "碎纸机" : "Shredder"
         case .largeFiles: return localization.currentLanguage == .chinese ? "大型和旧文件" : "Large & Old Files"
         case .fileExplorer: return localization.currentLanguage == .chinese ? "空间透镜" : "Space Lens"
         case .trash: return localization.currentLanguage == .chinese ? "废纸篓" : "Trash Bins"
@@ -192,10 +196,12 @@ struct SidebarMenuItem: View {
         case .deepClean: return "envelope"
         case .trash: return "trash"
         case .privacy: return "hand.raised"
-        case .optimizer: return "slider.horizontal.3"
-        case .monitor: return "wrench.and.screwdriver"
+        case .maintenance: return "wrench.and.screwdriver"
+        case .optimizer: return "bolt.fill"
+        case .monitor: return "chart.bar.xaxis"
         case .uninstaller: return "puzzlepiece.extension"
         case .fileExplorer: return "circle.hexagongrid"
+        case .shredder: return "doc.text.fill"
         case .largeFiles: return "doc"
         }
     }

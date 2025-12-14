@@ -280,7 +280,7 @@ struct SmartCleanerView: View {
             HStack {
                 Button(action: {
                     Task {
-                        await service.resetAll()
+                        service.resetAll()
                     }
                 }) {
                     HStack(spacing: 4) {
@@ -302,7 +302,7 @@ struct SmartCleanerView: View {
                 // 重新扫描按钮
                 Button(action: {
                     Task {
-                        await service.resetAll()
+                        service.resetAll()
                         await service.scanAll()
                     }
                 }) {
@@ -469,7 +469,7 @@ struct SmartCleanerView: View {
                 Button(action: {
                     // 返回初始状态
                     Task {
-                        await service.resetAll()
+                        service.resetAll()
                         showCleaningFinished = false
                     }
                 }) {

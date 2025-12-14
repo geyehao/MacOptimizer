@@ -47,8 +47,15 @@ enum FileType: String, CaseIterable, Identifiable {
     }
 }
 
+/// A wrapper to safely (in assumption) transfer non-Sendable types across actor boundaries.
+/// Use with caution and only when you know instances are not mutated concurrently.
+struct UnsafeTransfer<T>: @unchecked Sendable {
+    let value: T
+    init(_ value: T) { self.value = value }
+}
+
 // MARK: - 已安装应用模型
-class InstalledApp: Identifiable, ObservableObject, Hashable {
+class InstalledApp: Identifiable, ObservableObject, Hashable, @unchecked Sendable {
     let id = UUID()
     let name: String
     let path: URL

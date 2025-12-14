@@ -110,7 +110,7 @@ class LargeFileScanner: ObservableObject {
                     let currentTotal = batchSize
                     let currentCount = totalScannedCount
                     
-                    await MainActor.run {
+                    await MainActor.run { [currentFiles, currentTotal, currentCount] in
                         self.foundFiles = currentFiles
                         self.totalSize = currentTotal
                         self.scannedCount = currentCount
@@ -127,7 +127,7 @@ class LargeFileScanner: ObservableObject {
         let finalFiles = await collector.getResults().sorted(by: { $0.size > $1.size })
         let finalTotal = finalFiles.reduce(0) { $0 + $1.size }
         
-        await MainActor.run {
+        await MainActor.run { [finalFiles, finalTotal, totalScannedCount] in
             self.foundFiles = finalFiles
             self.totalSize = finalTotal
             self.scannedCount = totalScannedCount
@@ -211,7 +211,7 @@ class LargeFileScanner: ObservableObject {
                 }
                 
                 if let fileSize = resourceValues?.fileSize, Int64(fileSize) > minimumSize {
-                    let accessDate = (try? resourceValues?.contentAccessDate) ?? Date()
+                    let accessDate = resourceValues?.contentAccessDate ?? Date()
                     let item = FileItem(
                         url: fileURL,
                         name: fileURL.lastPathComponent,
@@ -251,7 +251,7 @@ class LargeFileScanner: ObservableObject {
          let remainingFiles = foundFiles.filter { !items.contains($0.id) }
          let newTotal = remainingFiles.reduce(0) { $0 + $1.size }
          
-         await MainActor.run {
+         await MainActor.run { [remainingFiles, newTotal, successCount, recoveredSize] in
              self.foundFiles = remainingFiles
              self.totalSize = newTotal
              self.cleanedCount += successCount
@@ -259,3 +259,4 @@ class LargeFileScanner: ObservableObject {
          }
     }
 }
+

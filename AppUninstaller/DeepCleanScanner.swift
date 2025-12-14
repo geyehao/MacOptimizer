@@ -147,7 +147,7 @@ class DeepCleanScanner: ObservableObject {
             for await (category, result) in group {
                 completedTasks += 1
                 
-                await MainActor.run {
+                await MainActor.run { [completedTasks] in
                     // Mark category as complete
                     self.completedCategories.insert(category)
                     
@@ -233,7 +233,7 @@ class DeepCleanScanner: ObservableObject {
         let finalDeletedSize = deletedSize
         let finalDeletedCount = deletedCount
         
-        await MainActor.run {
+        await MainActor.run { [finalDeletedSize, failures] in
             self.items.removeAll { item in
                 selectedItems.contains(where: { $0.id == item.id }) && !failures.contains(item.url)
             }

@@ -1,719 +1,631 @@
-import SwiftUI
 
-// MARK: - 优化分类
-enum OptimizerCategory: String, CaseIterable, Identifiable {
-    case oneClick = "一键优化"
-    case runningApps = "运行中应用"
-    case memory = "内存优化"
-    case system = "系统修复"
-    case cleanup = "清理优化"
-    case startup = "启动项"
+import SwiftUI
+import AppKit
+import UniformTypeIdentifiers
+
+// MARK: - Optimization Task Enum
+enum OptimizerTask: String, CaseIterable, Identifiable {
+    case heavyConsumers
+    case launchAgents
+    case hungApps
     
     var id: String { rawValue }
     
     var icon: String {
         switch self {
-        case .oneClick: return "bolt.fill"
-        case .runningApps: return "app.badge.fill"
-        case .memory: return "memorychip"
-        case .system: return "gearshape.2.fill"
-        case .cleanup: return "trash.fill"
-        case .startup: return "power"
+        case .heavyConsumers: return "chart.xyaxis.line" // Graph icon
+        case .launchAgents: return "rocket.fill"
+        case .hungApps: return "hourglass"
+        }
+    }
+    
+    var iconColor: Color {
+        switch self {
+        case .heavyConsumers: return Color(red: 1.0, green: 0.6, blue: 0.2) // Orange
+        case .launchAgents: return Color(red: 0.2, green: 0.8, blue: 0.4)   // Green/Cyan
+        case .hungApps: return Color(red: 0.9, green: 0.3, blue: 0.3)       // Reddish
+        }
+    }
+    
+    var englishTitle: String {
+        switch self {
+        case .heavyConsumers: return "Heavy Consumers"
+        case .launchAgents: return "Launch Agents"
+        case .hungApps: return "Hung Applications"
+        }
+    }
+    
+    var englishDescription: String {
+        switch self {
+        case .heavyConsumers: return "Quit apps that are using too much processing power."
+        case .launchAgents: return "Manage helper applications that launch automatically."
+        case .hungApps: return "Force quit applications that are not responding."
+        }
+    }
+    
+    // Localized properties
+    func title(for language: AppLanguage) -> String {
+        switch language {
+        case .chinese:
+            switch self {
+            case .heavyConsumers: return "占用较多资源的项目"
+            case .launchAgents: return "启动代理"
+            case .hungApps: return "挂起的应用程序"
+            }
+        case .english: return englishTitle
+        }
+    }
+    
+    func description(for language: AppLanguage) -> String {
+        switch language {
+        case .chinese:
+            switch self {
+            case .heavyConsumers: return "通常，很难发现一些运行的进程开始占用太多 Mac 资源。如果您不是真正需要这样的应用程序运行，则将其找出来并关闭。"
+            case .launchAgents: return "通常，这些是其他软件产品的小辅助应用程序，可以扩展其主产品的功能。但是在一些情况下，您可以考虑移除或禁用它们。"
+            case .hungApps: return "如果应用程序停止响应，您可以强制将其关闭以释放资源。"
+            }
+        case .english: return englishDescription
         }
     }
 }
 
+// MARK: - Data Models
+struct OptimizerProcessItem: Identifiable, Equatable {
+    let id: Int32 // PID
+    let name: String
+    let icon: NSImage
+    let usageDescription: String // e.g. "15% CPU" or "500 MB"
+    var isSelected: Bool = false
+}
+
+struct LaunchAgentItem: Identifiable, Equatable {
+    let id = UUID()
+    let path: String
+    let name: String // Extracted from filename or Label
+    let label: String
+    let icon: NSImage
+    var isEnabled: Bool // Status
+    var isSelected: Bool = false // For toggle action (disable/enable)
+}
+
+// MARK: - Service
+class OptimizerService: ObservableObject {
+    @Published var selectedTask: OptimizerTask = .heavyConsumers
+    @Published var heavyProcesses: [OptimizerProcessItem] = []
+    @Published var launchAgents: [LaunchAgentItem] = []
+    @Published var hungApps: [OptimizerProcessItem] = []
+    @Published var isScanning = false
+    @Published var isExecuting = false
+    
+    func scan() {
+        isScanning = true
+        Task {
+            await fetchHeavyConsumers()
+            await fetchLaunchAgents()
+            await fetchHungApps()
+            await MainActor.run { self.isScanning = false }
+        }
+    }
+    
+    @MainActor
+    private func fetchHeavyConsumers() {
+        // Run ps command to get top CPU consumers
+        // ps -Aceo pid,%cpu,comm -r | head -n 10
+        let task = Process()
+        task.launchPath = "/bin/bash"
+        task.arguments = ["-c", "ps -Aceo pid,%cpu,comm -r | head -n 15"]
+        
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.launch()
+        
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        if let output = String(data: data, encoding: .utf8) {
+            var items: [OptimizerProcessItem] = []
+            let lines = output.components(separatedBy: .newlines).dropFirst() // Skip header
+            
+            for line in lines {
+                let parts = line.trimmingCharacters(in: .whitespaces).components(separatedBy: .whitespaces).filter { !$0.isEmpty }
+                if parts.count >= 3, let pid = Int32(parts[0]), let cpu = Double(parts[1]) {
+                    if cpu > 1.0 { // Filter apps using > 1% CPU (simulated threshold for "Heavy")
+                         // Get app name and icon
+                        if let app = NSRunningApplication(processIdentifier: pid) {
+                            // Only show apps with icons (user visible)
+                            if let icon = app.icon, let name = app.localizedName {
+                                items.append(OptimizerProcessItem(id: pid, name: name, icon: icon, usageDescription: String(format: "%.1f%% CPU", cpu)))
+                            }
+                        }
+                    }
+                }
+            }
+            self.heavyProcesses = items
+        }
+    }
+    
+    @MainActor
+    private func fetchLaunchAgents() {
+        var items: [LaunchAgentItem] = []
+        let paths = [
+            FileManager.default.homeDirectoryForCurrentUser.path + "/Library/LaunchAgents",
+            "/Library/LaunchAgents"
+        ]
+        
+        for path in paths {
+            if let files = try? FileManager.default.contentsOfDirectory(atPath: path) {
+                for file in files where file.hasSuffix(".plist") {
+                    let fullPath = path + "/" + file
+                    // Simplified: Use filename as name, generic icon
+                    let name = file.replacingOccurrences(of: ".plist", with: "")
+                    // Check if loaded? roughly assume enabled if file exists for now, 
+                    // real check involves `launchctl list`
+                    
+                    // Simple logic: existing plist = enabled (unless disabled in override database, which is complex)
+                    // We will just list them.
+                    items.append(LaunchAgentItem(
+                        path: fullPath,
+                        name: name,
+                        label: name,
+                        icon: NSWorkspace.shared.icon(for: UTType(filenameExtension: "plist") ?? .propertyList),
+                        isEnabled: true
+                    ))
+                }
+            }
+        }
+        self.launchAgents = items
+    }
+    
+    @MainActor
+    private func fetchHungApps() {
+        // Detect apps in Uninterruptible sleep (U) or Zombie (Z) state
+        let task = Process()
+        task.launchPath = "/bin/bash"
+        task.arguments = ["-c", "ps -Aceo pid,state,comm | grep -e 'U' -e 'Z'"]
+        
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.launch()
+        
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        if let output = String(data: data, encoding: .utf8) {
+             var items: [OptimizerProcessItem] = []
+             let lines = output.components(separatedBy: .newlines)
+             for line in lines {
+                 let parts = line.trimmingCharacters(in: .whitespaces).components(separatedBy: .whitespaces).filter { !$0.isEmpty }
+                 if parts.count >= 3, let pid = Int32(parts[0]) {
+                     // Check if it's a gui app
+                     if let app = NSRunningApplication(processIdentifier: pid), let icon = app.icon, let name = app.localizedName {
+                         let state = parts[1]
+                         let desc = state.contains("Z") ? "Zombie" : "Unresponsive"
+                         items.append(OptimizerProcessItem(id: pid, name: name, icon: icon, usageDescription: desc))
+                     }
+                 }
+             }
+             self.hungApps = items
+        }
+    }
+    
+    func executeSelectedTasks() {
+        Task {
+            await MainActor.run { isExecuting = true }
+            
+            // 1. Kill Heavy Consumers
+            for item in heavyProcesses where item.isSelected {
+                kill(item.id, SIGKILL)
+            }
+            
+            // 2. Disable Launch Agents
+            for item in launchAgents where item.isSelected {
+                 // unload
+                 let task = Process()
+                 task.launchPath = "/bin/launchctl"
+                 task.arguments = ["bootout", "gui/\(getuid())", item.path] // Modern syntax
+                 // fallback to unload if bootout fails?
+                 try? task.run()
+                 
+                 // Move to disabled folder? Or just rename to .disabled
+                 // We will simply unload for now.
+            }
+            
+            // Refresh
+            await fetchHeavyConsumers()
+            await fetchLaunchAgents()
+            await MainActor.run { isExecuting = false }
+        }
+    }
+    
+    func toggleSelection(for id: Any) {
+        // Helper to toggle
+    }
+}
+
+// MARK: - Views
 struct OptimizerView: View {
-    @StateObject private var optimizer = SystemOptimizer()
+    @StateObject private var service = OptimizerService()
     @ObservedObject private var loc = LocalizationManager.shared
-    @State private var selectedCategory: OptimizerCategory = .oneClick
-    @State private var showingResult = false
-    @State private var resultMessage = ""
-    @State private var resultSuccess = false
+    
+    @State private var viewState = 0 // 0: Landing, 1: List
     
     var body: some View {
-        HSplitView {
-            // 左侧：分类列表
-            categoryListView
-                .frame(minWidth: 200, idealWidth: 250, maxWidth: 300)
+        ZStack {
+             // Shared Background
+            BackgroundStyles.privacy.ignoresSafeArea()
             
-            // 右侧：详情视图
-            detailView
-                .frame(minWidth: 400)
+            if viewState == 0 {
+                OptimizerLandingView(viewState: $viewState, loc: loc)
+            } else {
+                optimizerListView
+            }
         }
         .onAppear {
-            optimizer.scanRunningApps()
-            Task { await optimizer.scanLaunchAgents() }
-        }
-        .alert(resultSuccess ? (loc.currentLanguage == .chinese ? "优化成功" : "Success") : (loc.currentLanguage == .chinese ? "操作结果" : "Result"), isPresented: $showingResult) {
-            Button(loc.L("confirm"), role: .cancel) {}
-        } message: {
-            Text(resultMessage)
+            service.scan()
+            // Always start at landing page
+            viewState = 0
         }
     }
     
-    // MARK: - 左侧分类列表
-    private var categoryListView: some View {
-        VStack(spacing: 0) {
-            // 头部
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(loc.L("optimizer"))
-                        .font(.headline)
-                        .foregroundColor(.white)
-                    Text(loc.currentLanguage == .chinese ? "让 Mac 保持最佳状态" : "Keep your Mac at peak performance")
-                        .font(.caption)
-                        .foregroundColor(.secondaryText)
-                }
-                Spacer()
-            }
-            .padding(16)
-            .background(Color.black.opacity(0.2))
-            
-            // 分类列表
-            ScrollView {
-                VStack(spacing: 4) {
-                    ForEach(OptimizerCategory.allCases) { category in
-                        CategoryRow(
-                            category: category,
-                            isSelected: selectedCategory == category,
-                            loc: loc,
-                            count: getCategoryCount(category)
-                        ) {
-                            selectedCategory = category
+    // Existing list logic moved here
+    var optimizerListView: some View {
+        GeometryReader { geometry in
+            HStack(spacing: 0) {
+                // LEFT PANEL (Task Selection)
+                ZStack {
+                    Color.black.opacity(0.1).ignoresSafeArea()
+                    VStack(alignment: .leading, spacing: 0) {
+                         // Back button (Functional)
+                        Button(action: { viewState = 0 }) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "chevron.left")
+                                Text(loc.currentLanguage == .chinese ? "简介" : "Intro")
+                            }
+                            .foregroundColor(.white.opacity(0.7))
+                            .font(.system(size: 13))
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.leading, 16)
+                        .padding(.top, 16)
+                        .padding(.bottom, 20)
+                        
+                        // Tasks List
+                        ScrollView {
+                            VStack(spacing: 4) {
+                                ForEach(OptimizerTask.allCases) { task in
+                                    OptimizerTaskRow(
+                                        task: task,
+                                        isSelected: service.selectedTask == task,
+                                        loc: loc
+                                    )
+                                    .onTapGesture {
+                                        service.selectedTask = task
+                                    }
+                                }
+                            }
+                            .padding(.horizontal, 10)
                         }
                     }
                 }
-                .padding(12)
-            }
-            
-            Spacer()
-        }
-        .background(Color.black.opacity(0.1))
-    }
-    
-    private func getCategoryCount(_ category: OptimizerCategory) -> Int? {
-        switch category {
-        case .runningApps: return optimizer.runningApps.count
-        case .startup: return optimizer.launchAgents.count
-        default: return nil
-        }
-    }
-    
-    // MARK: - 右侧详情视图
-    @ViewBuilder
-    private var detailView: some View {
-        VStack(spacing: 0) {
-            // 详情头部
-            HStack {
-                Image(systemName: selectedCategory.icon)
-                    .font(.title2)
-                    .foregroundStyle(GradientStyles.optimizer)
+                .frame(width: geometry.size.width * 0.4)
                 
-                Text(localizedCategoryName(selectedCategory))
-                    .font(.title2)
-                    .fontWeight(.bold)
-                    .foregroundColor(.white)
-                
-                Spacer()
-                
-                if optimizer.isOptimizing {
-                    ProgressView()
-                        .scaleEffect(0.8)
-                }
-            }
-            .padding(24)
-            .background(Color.black.opacity(0.2))
-            
-            // 具体内容
-            ScrollView {
-                VStack(spacing: 20) {
-                    switch selectedCategory {
-                    case .oneClick:
-                        oneClickDetailView
-                    case .runningApps:
-                        runningAppsDetailView
-                    case .memory:
-                        memoryDetailView
-                    case .system:
-                        systemDetailView
-                    case .cleanup:
-                        cleanupDetailView
-                    case .startup:
-                        startupDetailView
-                    }
-                }
-                .padding(24)
-                .padding(.bottom, 100) // 为底部按钮留空间
-            }
-            
-            // 底部一键优化大圆圈按钮
-            VStack {
-                Spacer()
-                HStack {
-                    Spacer()
-                    oneClickButton
-                    Spacer()
-                    Spacer() // 增加右侧空间，使按钮视觉上偏左
-                }
-                .padding(.bottom, 10)
-            }
-        }
-    }
-    
-    // MARK: - 一键优化大圆圈按钮
-    private var oneClickButton: some View {
-        Button(action: {
-            Task {
-                let result = await optimizer.performOneClickOptimization()
-                resultSuccess = result.success
-                resultMessage = loc.currentLanguage == .chinese ? result.message : "Optimization completed"
-                showingResult = true
-            }
-        }) {
-            ZStack {
-                // 外圈光晕
-                Circle()
-                    .fill(
-                        RadialGradient(
-                            colors: [Color.orange.opacity(0.3), Color.clear],
-                            center: .center,
-                            startRadius: 40,
-                            endRadius: 70
-                        )
-                    )
-                    .frame(width: 140, height: 140)
-                
-                // 主圆圈
-                Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: [Color.orange, Color.red],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .frame(width: 90, height: 90)
-                    .shadow(color: Color.orange.opacity(0.5), radius: 15, x: 0, y: 8)
-                
-                // 内容
-                VStack(spacing: 2) {
-                    if optimizer.isOptimizing {
-                        ProgressView()
-                            .scaleEffect(1.0)
-                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                    } else {
-                        Image(systemName: "bolt.fill")
-                            .font(.system(size: 24))
-                        Text(loc.currentLanguage == .chinese ? "优化" : "Optimize")
-                            .font(.system(size: 12, weight: .semibold))
-                    }
-                }
-                .foregroundColor(.white)
-            }
-        }
-        .buttonStyle(.plain)
-        .disabled(optimizer.isOptimizing)
-    }
-    
-    private func localizedCategoryName(_ category: OptimizerCategory) -> String {
-        switch category {
-        case .oneClick: return loc.currentLanguage == .chinese ? "一键优化" : "One-Click Optimize"
-        case .runningApps: return loc.currentLanguage == .chinese ? "运行中应用" : "Running Apps"
-        case .memory: return loc.currentLanguage == .chinese ? "内存优化" : "Memory"
-        case .system: return loc.currentLanguage == .chinese ? "系统修复" : "System Repair"
-        case .cleanup: return loc.currentLanguage == .chinese ? "清理优化" : "Cleanup"
-        case .startup: return loc.currentLanguage == .chinese ? "启动项管理" : "Startup Items"
-        }
-    }
-    
-    // MARK: - 一键优化详情
-    private var oneClickDetailView: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            Text(loc.currentLanguage == .chinese ? "一键优化将执行以下操作：" : "One-click optimization will perform:")
-                .font(.headline)
-                .foregroundColor(.white)
-            
-            VStack(spacing: 12) {
-                OptimizationItem(icon: "xmark.app.fill", title: loc.currentLanguage == .chinese ? "关闭选中的后台应用" : "Close selected background apps", description: loc.currentLanguage == .chinese ? "释放被占用的系统资源" : "Free up system resources")
-                OptimizationItem(icon: "memorychip", title: loc.currentLanguage == .chinese ? "释放系统内存" : "Free system memory", description: loc.currentLanguage == .chinese ? "清理未使用的 RAM" : "Clean unused RAM")
-                OptimizationItem(icon: "doc.on.clipboard", title: loc.currentLanguage == .chinese ? "清空剪贴板" : "Clear clipboard", description: loc.currentLanguage == .chinese ? "保护隐私数据" : "Protect privacy")
-            }
-            
-            Spacer()
-        }
-    }
-    
-    // MARK: - 运行中应用详情
-    private var runningAppsDetailView: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                Text(loc.currentLanguage == .chinese ? "选择要关闭的应用" : "Select apps to close")
-                    .font(.headline)
-                    .foregroundColor(.white)
-                
-                Spacer()
-                
-                Button(loc.currentLanguage == .chinese ? "全选" : "All") {
-                    optimizer.selectAllApps(true)
-                }
-                .buttonStyle(.plain)
-                .foregroundColor(.orange)
-                
-                Button(loc.currentLanguage == .chinese ? "取消" : "None") {
-                    optimizer.selectAllApps(false)
-                }
-                .buttonStyle(.plain)
-                .foregroundColor(.secondaryText)
-                
-                Button(action: { optimizer.scanRunningApps() }) {
-                    Image(systemName: "arrow.clockwise")
-                }
-                .buttonStyle(.plain)
-                .foregroundColor(.secondaryText)
-            }
-            
-            if optimizer.runningApps.isEmpty {
-                VStack(spacing: 12) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 48))
-                        .foregroundStyle(GradientStyles.optimizer)
-                    Text(loc.currentLanguage == .chinese ? "没有可关闭的后台应用" : "No background apps to close")
-                        .foregroundColor(.secondaryText)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(40)
-            } else {
-                VStack(spacing: 0) {
-                    ForEach(optimizer.runningApps) { appItem in
-                        RunningAppRow(appItem: appItem, loc: loc)
-                        if appItem.id != optimizer.runningApps.last?.id {
-                            Divider().background(Color.white.opacity(0.1))
-                        }
-                    }
-                }
-                .padding(12)
-                .background(Color.white.opacity(0.03))
-                .cornerRadius(12)
-                
-                let selectedCount = optimizer.runningApps.filter { $0.isSelected }.count
-                if selectedCount > 0 {
-                    Button(action: {
-                        Task {
-                            let count = await optimizer.terminateSelectedApps()
-                            resultSuccess = true
-                            resultMessage = loc.currentLanguage == .chinese ? "已关闭 \(count) 个应用" : "Closed \(count) apps"
-                            showingResult = true
-                        }
-                    }) {
+                // RIGHT PANEL (Details)
+                ZStack {
+                    // Background handled in parent ZStack
+                    
+                    VStack(alignment: .leading, spacing: 0) {
+                        // Header
                         HStack {
-                            Image(systemName: "xmark.circle.fill")
-                            Text(loc.currentLanguage == .chinese ? "关闭选中的 \(selectedCount) 个应用" : "Close \(selectedCount) Selected")
+                            Text(loc.currentLanguage == .chinese ? "优化" : "Optimization")
+                                .font(.system(size: 13))
+                                .foregroundColor(.white.opacity(0.6))
+                            Spacer()
+                            
+                            // Search Bar
+                            HStack {
+                                Image(systemName: "magnifyingglass")
+                                    .foregroundColor(.white.opacity(0.5))
+                                Text(loc.currentLanguage == .chinese ? "搜索" : "Search")
+                                    .foregroundColor(.white.opacity(0.3))
+                                Spacer()
+                            }
+                            .frame(width: 160, height: 28)
+                            .background(Color.black.opacity(0.2))
+                            .cornerRadius(6)
+                            
+                            // Assistant Button
+                            HStack(spacing: 4) {
+                                Circle().fill(Color.green).frame(width: 6, height: 6)
+                                Text(loc.currentLanguage == .chinese ? "助手" : "Assistant")
+                            }
+                            .font(.system(size: 12))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 4)
+                            .background(Color.white.opacity(0.15))
+                            .cornerRadius(12)
                         }
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 20)
-                        .padding(.vertical, 12)
-                        .background(Color.red.opacity(0.8))
-                        .cornerRadius(10)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-        }
-    }
-    
-    // MARK: - 内存优化详情
-    private var memoryDetailView: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text(loc.currentLanguage == .chinese ? "内存优化选项" : "Memory Optimization Options")
-                .font(.headline)
-                .foregroundColor(.white)
-            
-            OptimizationActionCard(type: .freeMemory, loc: loc, optimizer: optimizer) { result in
-                resultSuccess = result.success
-                resultMessage = result.message
-                showingResult = true
-            }
-        }
-    }
-    
-    // MARK: - 系统修复详情
-    private var systemDetailView: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text(loc.currentLanguage == .chinese ? "系统修复选项" : "System Repair Options")
-                .font(.headline)
-                .foregroundColor(.white)
-            
-            LazyVGrid(columns: [GridItem(.flexible())], spacing: 12) {
-                OptimizationActionCard(type: .flushDNS, loc: loc, optimizer: optimizer) { result in
-                    resultSuccess = result.success; resultMessage = result.message; showingResult = true
-                }
-                OptimizationActionCard(type: .rebuildSpotlight, loc: loc, optimizer: optimizer) { result in
-                    resultSuccess = result.success; resultMessage = result.message; showingResult = true
-                }
-                OptimizationActionCard(type: .rebuildLaunchServices, loc: loc, optimizer: optimizer) { result in
-                    resultSuccess = result.success; resultMessage = result.message; showingResult = true
-                }
-                OptimizationActionCard(type: .repairPermissions, loc: loc, optimizer: optimizer) { result in
-                    resultSuccess = result.success; resultMessage = result.message; showingResult = true
-                }
-                OptimizationActionCard(type: .clearFontCache, loc: loc, optimizer: optimizer) { result in
-                    resultSuccess = result.success; resultMessage = result.message; showingResult = true
-                }
-            }
-        }
-    }
-    
-    // MARK: - 清理优化详情
-    private var cleanupDetailView: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text(loc.currentLanguage == .chinese ? "清理优化选项" : "Cleanup Options")
-                .font(.headline)
-                .foregroundColor(.white)
-            
-            LazyVGrid(columns: [GridItem(.flexible())], spacing: 12) {
-                OptimizationActionCard(type: .clearClipboard, loc: loc, optimizer: optimizer) { result in
-                    resultSuccess = result.success; resultMessage = result.message; showingResult = true
-                }
-                OptimizationActionCard(type: .clearRecentItems, loc: loc, optimizer: optimizer) { result in
-                    resultSuccess = result.success; resultMessage = result.message; showingResult = true
-                }
-                OptimizationActionCard(type: .restartFinder, loc: loc, optimizer: optimizer) { result in
-                    resultSuccess = result.success; resultMessage = result.message; showingResult = true
-                }
-                OptimizationActionCard(type: .restartDock, loc: loc, optimizer: optimizer) { result in
-                    resultSuccess = result.success; resultMessage = result.message; showingResult = true
-                }
-            }
-        }
-    }
-    
-    // MARK: - 启动项详情
-    private var startupDetailView: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                Text(loc.currentLanguage == .chinese ? "用户启动项" : "User Startup Items")
-                    .font(.headline)
-                    .foregroundColor(.white)
-                
-                Spacer()
-                
-                Button(action: { Task { await optimizer.scanLaunchAgents() } }) {
-                    Image(systemName: "arrow.clockwise")
-                }
-                .buttonStyle(.plain)
-                .foregroundColor(.secondaryText)
-            }
-            
-            if optimizer.isScanning {
-                HStack {
-                    ProgressView().scaleEffect(0.8)
-                    Text(loc.currentLanguage == .chinese ? "正在扫描..." : "Scanning...")
-                        .foregroundColor(.secondaryText)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(40)
-            } else if optimizer.launchAgents.isEmpty {
-                VStack(spacing: 12) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 48))
-                        .foregroundStyle(GradientStyles.optimizer)
-                    Text(loc.currentLanguage == .chinese ? "没有用户启动项" : "No user startup items")
-                        .foregroundColor(.secondaryText)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(40)
-            } else {
-                VStack(spacing: 0) {
-                    ForEach(optimizer.launchAgents) { agent in
-                        AgentRow(agent: agent, optimizer: optimizer, loc: loc)
-                        if agent.id != optimizer.launchAgents.last?.id {
-                            Divider().background(Color.white.opacity(0.1))
+                        .padding(.horizontal, 24)
+                        .padding(.top, 16)
+                        .padding(.bottom, 20)
+                        
+                        // Title & Desc
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(service.selectedTask.title(for: loc.currentLanguage))
+                                .font(.system(size: 28, weight: .bold))
+                                .foregroundColor(.white)
+                            
+                            Text(service.selectedTask.description(for: loc.currentLanguage))
+                                .font(.system(size: 13))
+                                .lineSpacing(4)
+                                .foregroundColor(.white.opacity(0.8))
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(.horizontal, 24)
+                        .padding(.bottom, 30)
+                        
+                        // Content List
+                        ScrollView {
+                            VStack(spacing: 0) {
+                                if service.selectedTask == .heavyConsumers {
+                                    ForEach($service.heavyProcesses) { $proc in
+                                        HeavyProcessRow(item: proc, isSelected: $proc.isSelected)
+                                    }
+                                } else if service.selectedTask == .launchAgents {
+                                    ForEach($service.launchAgents) { $agent in
+                                        LaunchAgentRow(item: agent, isSelected: $agent.isSelected, loc: loc)
+                                    }
+                                } else {
+                                    if service.hungApps.isEmpty {
+                                        Text(loc.currentLanguage == .chinese ? "未发现挂起的应用程序" : "No hung applications found")
+                                            .foregroundColor(.white.opacity(0.5))
+                                            .padding(.top, 40)
+                                            .frame(maxWidth: .infinity, alignment: .center)
+                                    } else {
+                                        ForEach($service.hungApps) { $proc in
+                                            HeavyProcessRow(item: proc, isSelected: $proc.isSelected)
+                                        }
+                                    }
+                                }
+                            }
+                            .padding(.horizontal, 24)
+                        }
+                        
+                        Spacer()
+                        
+                        // Execute Button (Only clear if items selected?)
+                        HStack {
+                            Spacer()
+                            Button(action: { service.executeSelectedTasks() }) {
+                                ZStack {
+                                    Circle()
+                                        .fill(Color.white.opacity(0.15))
+                                        .frame(width: 110, height: 110)
+                                    
+                                    Circle()
+                                        .strokeBorder(
+                                            LinearGradient(colors: [.white.opacity(0.5), .white.opacity(0.1)], startPoint: .top, endPoint: .bottom),
+                                            lineWidth: 1
+                                        )
+                                        .frame(width: 110, height: 110)
+                                    
+                                    Text(loc.currentLanguage == .chinese ? "执行" : "Run")
+                                        .font(.system(size: 18, weight: .medium))
+                                        .foregroundColor(.white)
+                                }
+                                .shadow(color: .black.opacity(0.2), radius: 10, y: 5)
+                            }
+                            .buttonStyle(.plain)
+                            .padding(.bottom, 30)
+                            Spacer()
                         }
                     }
+                    .frame(width: geometry.size.width * 0.6)
                 }
-                .padding(12)
-                .background(Color.white.opacity(0.03))
-                .cornerRadius(12)
             }
         }
     }
 }
 
-// MARK: - 分类行
-struct CategoryRow: View {
-    let category: OptimizerCategory
+// MARK: - Row Components
+struct OptimizerTaskRow: View {
+    let task: OptimizerTask
     let isSelected: Bool
     @ObservedObject var loc: LocalizationManager
-    let count: Int?
-    let action: () -> Void
     
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 12) {
-                Image(systemName: category.icon)
-                    .font(.system(size: 18))
-                    .foregroundStyle(isSelected ? GradientStyles.optimizer : LinearGradient(colors: [.gray], startPoint: .top, endPoint: .bottom))
-                    .frame(width: 24)
+        HStack(spacing: 12) {
+            // Radio Button
+            ZStack {
+                Circle()
+                    .strokeBorder(isSelected ? Color.white : Color.white.opacity(0.3), lineWidth: 1.5)
+                    .frame(width: 18, height: 18)
                 
-                Text(localizedName)
-                    .font(.system(size: 14, weight: isSelected ? .semibold : .regular))
-                    .foregroundColor(isSelected ? .white : .secondaryText)
+                if isSelected {
+                    Circle()
+                        .fill(Color.white)
+                        .frame(width: 10, height: 10)
+                }
+            }
+            
+            // Icon
+            ZStack {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(task.iconColor)
+                    .frame(width: 32, height: 32)
+                
+                Image(systemName: task.icon)
+                    .font(.system(size: 16))
+                    .foregroundColor(.white)
+            }
+            .shadow(color: task.iconColor.opacity(0.4), radius: 4, y: 2)
+            
+            // Title
+            Text(task.title(for: loc.currentLanguage))
+                .font(.system(size: 14, weight: isSelected ? .medium : .regular))
+                .foregroundColor(.white)
+            
+            Spacer()
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(isSelected ? Color.white.opacity(0.1) : Color.clear)
+        .cornerRadius(8)
+    }
+}
+
+struct HeavyProcessRow: View {
+    let item: OptimizerProcessItem
+    @Binding var isSelected: Bool
+    
+    var body: some View {
+        HStack(spacing: 12) {
+            // Checkbox
+            Button(action: { isSelected.toggle() }) {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 20))
+                    .foregroundColor(isSelected ? .white : .white.opacity(0.3))
+            }
+            .buttonStyle(.plain)
+            
+            Image(nsImage: item.icon)
+                .resizable()
+                .frame(width: 32, height: 32)
+            
+            Text(item.name)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundColor(.white)
+            
+            Spacer()
+            
+            Text(item.usageDescription)
+                .font(.system(size: 12))
+                .foregroundColor(.white.opacity(0.6))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 2)
+                .background(Color.white.opacity(0.1))
+                .cornerRadius(4)
+        }
+        .padding(.vertical, 10)
+        .contentShape(Rectangle())
+        .onTapGesture { isSelected.toggle() }
+    }
+}
+
+struct LaunchAgentRow: View {
+    let item: LaunchAgentItem
+    @Binding var isSelected: Bool
+    @ObservedObject var loc: LocalizationManager
+    
+    var body: some View {
+        HStack(spacing: 12) {
+            // Checkbox
+            Button(action: { isSelected.toggle() }) {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 20))
+                    .foregroundColor(isSelected ? .white : .white.opacity(0.3))
+            }
+            .buttonStyle(.plain)
+            
+            Image(nsImage: item.icon)
+                .resizable()
+                .frame(width: 32, height: 32)
+            
+            Text(item.name)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundColor(.white)
+            
+            Spacer()
+            
+            // Status Indicator
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(item.isEnabled ? Color.green : Color.gray)
+                    .frame(width: 8, height: 8)
+                Text(item.isEnabled ? (loc.currentLanguage == .chinese ? "已启用" : "Enabled") : (loc.currentLanguage == .chinese ? "已禁用" : "Disabled"))
+                    .font(.system(size: 12))
+                    .foregroundColor(.white.opacity(0.8))
+            }
+        }
+        .padding(.vertical, 10)
+    }
+}
+// MARK: - Landing Components
+struct OptimizerLandingView: View {
+    @Binding var viewState: Int // 0=Landing, 1=List
+    @ObservedObject var loc: LocalizationManager
+    
+    var body: some View {
+        GeometryReader { geometry in
+            HStack(spacing: 0) {
+                // Left: Content
+                VStack(alignment: .leading, spacing: 32) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text(loc.currentLanguage == .chinese ? "优化" : "Optimization")
+                            .font(.system(size: 32, weight: .bold))
+                            .foregroundColor(.white)
+                        
+                        Text(loc.currentLanguage == .chinese ? "通过控制 Mac 上运行的应用，提高它的输出。" : "Improve output by controlling apps running on your Mac.")
+                            .font(.system(size: 14))
+                            .foregroundColor(.white.opacity(0.8))
+                            .lineLimit(2)
+                    }
+                    
+                    VStack(alignment: .leading, spacing: 24) {
+                        ShredderFeatureRow(icon: "light.beacon.max.fill", title: loc.currentLanguage == .chinese ? "管理应用的启动代理" : "Manage Launch Agents", description: loc.currentLanguage == .chinese ? "控制您的 Mac 支持的应用。" : "Control applications supported by your Mac.")
+                        ShredderFeatureRow(icon: "waveform.path.ecg", title: loc.currentLanguage == .chinese ? "控制正在运行的应用" : "Control Running Apps", description: loc.currentLanguage == .chinese ? "管理所有登录项，仅运行真正需要的项目。" : "Manage login items, running only what you truly need.")
+                    }
+                    
+                    Button(action: { viewState = 1 }) {
+                        Text(loc.currentLanguage == .chinese ? "查看项目" : "View Items")
+                            .font(.system(size: 14, weight: .semibold))
+                            .padding(.horizontal, 24)
+                            .padding(.vertical, 10)
+                            .background(Color(red: 0.2, green: 0.7, blue: 0.9)) // Cyan/Blue
+                            .foregroundColor(.white)
+                            .cornerRadius(6)
+                    }
+                    .buttonStyle(.plain)
+                    .shadow(radius: 5)
+                }
+                .frame(maxWidth: 400)
+                .padding(.leading, 60)
                 
                 Spacer()
                 
-                if let count = count, count > 0 {
-                    Text("\(count)")
-                        .font(.caption)
-                        .foregroundColor(.secondaryText)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 2)
-                        .background(Color.white.opacity(0.1))
-                        .cornerRadius(8)
-                }
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .background(isSelected ? Color.white.opacity(0.1) : Color.clear)
-            .cornerRadius(8)
-        }
-        .buttonStyle(.plain)
-    }
-    
-    private var localizedName: String {
-        switch category {
-        case .oneClick: return loc.currentLanguage == .chinese ? "一键优化" : "One-Click"
-        case .runningApps: return loc.currentLanguage == .chinese ? "运行中应用" : "Running Apps"
-        case .memory: return loc.currentLanguage == .chinese ? "内存优化" : "Memory"
-        case .system: return loc.currentLanguage == .chinese ? "系统修复" : "System Repair"
-        case .cleanup: return loc.currentLanguage == .chinese ? "清理优化" : "Cleanup"
-        case .startup: return loc.currentLanguage == .chinese ? "启动项" : "Startup"
-        }
-    }
-}
-
-// MARK: - 优化项说明
-struct OptimizationItem: View {
-    let icon: String
-    let title: String
-    let description: String
-    
-    var body: some View {
-        HStack(spacing: 16) {
-            Image(systemName: icon)
-                .font(.title2)
-                .foregroundStyle(GradientStyles.optimizer)
-                .frame(width: 40)
-            
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(.white)
-                Text(description)
-                    .font(.caption)
-                    .foregroundColor(.secondaryText)
-            }
-            
-            Spacer()
-            
-            Image(systemName: "checkmark.circle.fill")
-                .foregroundColor(.green)
-        }
-        .padding(16)
-        .background(Color.white.opacity(0.03))
-        .cornerRadius(12)
-    }
-}
-
-// MARK: - 优化操作卡片
-struct OptimizationActionCard: View {
-    let type: OptimizationType
-    @ObservedObject var loc: LocalizationManager
-    @ObservedObject var optimizer: SystemOptimizer
-    let onComplete: (( success: Bool, message: String)) -> Void
-    
-    @State private var isLoading = false
-    
-    var body: some View {
-        HStack(spacing: 16) {
-            Image(systemName: type.icon)
-                .font(.title2)
-                .foregroundStyle(GradientStyles.optimizer)
-                .frame(width: 40)
-            
-            VStack(alignment: .leading, spacing: 2) {
-                Text(localizedName)
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(.white)
-                Text(localizedDescription)
-                    .font(.caption)
-                    .foregroundColor(.secondaryText)
-            }
-            
-            Spacer()
-            
-            if type.requiresAdmin {
-                Image(systemName: "lock.fill")
-                    .font(.caption)
-                    .foregroundColor(.secondaryText)
-            }
-            
-            Button(action: {
-                Task {
-                    isLoading = true
-                    let result = await optimizer.performOptimization(type)
-                    isLoading = false
-                    onComplete((result.success, loc.currentLanguage == .chinese ? result.message : getEnglishMessage()))
-                }
-            }) {
-                if isLoading {
-                    ProgressView().scaleEffect(0.7)
-                } else {
-                    Text(loc.currentLanguage == .chinese ? "执行" : "Run")
-                        .font(.caption)
-                        .fontWeight(.medium)
-                }
-            }
-            .buttonStyle(.plain)
-            .foregroundColor(.orange)
-            .disabled(isLoading)
-        }
-        .padding(16)
-        .background(Color.white.opacity(0.03))
-        .cornerRadius(12)
-    }
-    
-    private var localizedName: String {
-        switch type {
-        case .freeMemory: return loc.currentLanguage == .chinese ? "释放内存" : "Free Memory"
-        case .flushDNS: return loc.currentLanguage == .chinese ? "刷新 DNS" : "Flush DNS"
-        case .rebuildSpotlight: return loc.currentLanguage == .chinese ? "重建 Spotlight 索引" : "Rebuild Spotlight"
-        case .rebuildLaunchServices: return loc.currentLanguage == .chinese ? "重建启动服务数据库" : "Rebuild LaunchServices"
-        case .clearFontCache: return loc.currentLanguage == .chinese ? "清除字体缓存" : "Clear Font Cache"
-        case .repairPermissions: return loc.currentLanguage == .chinese ? "验证磁盘权限" : "Verify Permissions"
-        case .killBackgroundApps: return loc.currentLanguage == .chinese ? "关闭后台应用" : "Kill Background Apps"
-        case .clearClipboard: return loc.currentLanguage == .chinese ? "清空剪贴板" : "Clear Clipboard"
-        case .clearRecentItems: return loc.currentLanguage == .chinese ? "清除最近记录" : "Clear Recent Items"
-        case .restartFinder: return loc.currentLanguage == .chinese ? "重启 Finder" : "Restart Finder"
-        case .restartDock: return loc.currentLanguage == .chinese ? "重启 Dock" : "Restart Dock"
-        }
-    }
-    
-    private var localizedDescription: String {
-        switch type {
-        case .freeMemory: return loc.currentLanguage == .chinese ? "清理系统内存，释放未使用的 RAM" : "Clean system RAM"
-        case .flushDNS: return loc.currentLanguage == .chinese ? "清除 DNS 缓存，解决网络问题" : "Fix network issues"
-        case .rebuildSpotlight: return loc.currentLanguage == .chinese ? "重建搜索索引，修复搜索问题" : "Fix search issues"
-        case .rebuildLaunchServices: return loc.currentLanguage == .chinese ? "修复打开方式菜单重复项" : "Fix Open With menu"
-        case .clearFontCache: return loc.currentLanguage == .chinese ? "清除字体缓存，修复字体显示问题" : "Fix font issues"
-        case .repairPermissions: return loc.currentLanguage == .chinese ? "验证并修复系统目录权限" : "Verify permissions"
-        case .killBackgroundApps: return loc.currentLanguage == .chinese ? "强制关闭所有后台应用" : "Kill background apps"
-        case .clearClipboard: return loc.currentLanguage == .chinese ? "清空系统剪贴板内容" : "Clear clipboard"
-        case .clearRecentItems: return loc.currentLanguage == .chinese ? "清除最近使用的文件记录" : "Clear recent files"
-        case .restartFinder: return loc.currentLanguage == .chinese ? "重启 Finder 解决卡顿问题" : "Fix Finder issues"
-        case .restartDock: return loc.currentLanguage == .chinese ? "重启 Dock 解决图标问题" : "Fix Dock issues"
-        }
-    }
-    
-    private func getEnglishMessage() -> String {
-        switch type {
-        case .freeMemory: return "Memory freed"
-        case .flushDNS: return "DNS cache flushed"
-        case .rebuildSpotlight: return "Spotlight rebuilding"
-        case .rebuildLaunchServices: return "LaunchServices rebuilt"
-        case .clearFontCache: return "Font cache cleared"
-        case .repairPermissions: return "Permissions verified"
-        case .killBackgroundApps: return "Apps closed"
-        case .clearClipboard: return "Clipboard cleared"
-        case .clearRecentItems: return "Recent items cleared"
-        case .restartFinder: return "Finder restarted"
-        case .restartDock: return "Dock restarted"
-        }
-    }
-}
-
-// MARK: - 运行中应用行
-struct RunningAppRow: View {
-    @ObservedObject var appItem: RunningAppItem
-    @ObservedObject var loc: LocalizationManager
-    
-    var body: some View {
-        HStack(spacing: 12) {
-            Button(action: { appItem.isSelected.toggle() }) {
-                Image(systemName: appItem.isSelected ? "checkmark.circle.fill" : "circle")
-                    .foregroundColor(appItem.isSelected ? .orange : .gray)
-                    .font(.system(size: 20))
-            }
-            .buttonStyle(.plain)
-            
-            Image(nsImage: appItem.icon)
-                .resizable()
-                .frame(width: 28, height: 28)
-            
-            Text(appItem.name)
-                .font(.system(size: 13))
-                .foregroundColor(.white)
-                .lineLimit(1)
-            
-            Spacer()
-        }
-        .padding(.vertical, 8)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            appItem.isSelected.toggle()
-        }
-    }
-}
-
-// MARK: - 启动项行
-struct AgentRow: View {
-    @ObservedObject var agent: LaunchItem
-    @ObservedObject var optimizer: SystemOptimizer
-    @ObservedObject var loc: LocalizationManager
-    @State private var isPerformAction = false
-    
-    var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "gearshape.2.fill")
-                .font(.system(size: 20))
-                .foregroundStyle(GradientStyles.optimizer)
-                .frame(width: 32)
-            
-            VStack(alignment: .leading, spacing: 2) {
-                Text(agent.name)
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(.primaryText)
-                    .lineLimit(1)
-                
-                Text(agent.isEnabled ? (loc.currentLanguage == .chinese ? "已启用" : "Enabled") : (loc.currentLanguage == .chinese ? "已禁用" : "Disabled"))
-                    .font(.caption)
-                    .foregroundColor(agent.isEnabled ? .success : .secondaryText)
-            }
-            
-            Spacer()
-            
-            Toggle("", isOn: Binding(
-                get: { agent.isEnabled },
-                set: { _ in
-                    isPerformAction = true
-                    Task {
-                        _ = await optimizer.toggleAgent(agent)
-                        isPerformAction = false
+                // Right: Icon (Purple Circle with Sliders)
+                ZStack {
+                    Circle()
+                        .fill(
+                            LinearGradient(
+                                colors: [Color(red: 0.8, green: 0.4, blue: 0.7), Color(red: 0.5, green: 0.2, blue: 0.7)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .frame(width: 320, height: 320)
+                        
+                        .shadow(radius: 20)
+                    
+                    // Sliders (Visual)
+                    HStack(spacing: 30) {
+                        // Slider 1
+                        VStack(spacing: 0) {
+                            Capsule().fill(Color.white.opacity(0.3)).frame(width: 8, height: 60)
+                            Circle().fill(Color.white).frame(width: 24, height: 24)
+                            Capsule().fill(Color.white.opacity(0.3)).frame(width: 8, height: 100)
+                        }
+                        // Slider 2
+                        VStack(spacing: 0) {
+                            Capsule().fill(Color.white.opacity(0.3)).frame(width: 8, height: 100)
+                            Circle().fill(Color.white).frame(width: 24, height: 24)
+                            Capsule().fill(Color.white.opacity(0.3)).frame(width: 8, height: 60)
+                        }
+                        // Slider 3 (Lower)
+                        VStack(spacing: 0) {
+                            Capsule().fill(Color.white.opacity(0.3)).frame(width: 8, height: 40)
+                            Circle().fill(Color.white).frame(width: 24, height: 24)
+                            Capsule().fill(Color.white.opacity(0.3)).frame(width: 8, height: 120)
+                        }
                     }
                 }
-            ))
-            .toggleStyle(SwitchToggleStyle(tint: .orange))
-            .disabled(isPerformAction)
-            
-            Button(action: {
-                Task { await optimizer.removeAgent(agent) }
-            }) {
-                Image(systemName: "trash")
-                    .foregroundColor(.secondaryText)
+                .padding(.trailing, 60)
             }
-            .buttonStyle(.plain)
-            .padding(.leading, 8)
         }
-        .padding(.vertical, 8)
     }
 }

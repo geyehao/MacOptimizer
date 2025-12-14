@@ -14,6 +14,10 @@ extension Color {
     static let secondaryText = Color.white.opacity(0.7)
     static let tertiaryText = Color.white.opacity(0.4)
     
+    // 4. 碎纸机 (蓝色系)
+    static let shredderStart = Color(red: 0.0, green: 0.5, blue: 1.0)
+    static let shredderEnd = Color(red: 0.0, green: 0.3, blue: 0.8)
+    
     // 功能模块强调色
     // 1. 卸载器 (蓝色系 - 智能/冷静)
     static let uninstallerStart = Color(red: 0.0, green: 0.6, blue: 1.0)
@@ -49,6 +53,12 @@ struct GradientStyles {
     
     static let optimizer = LinearGradient(
         colors: [.optimizerStart, .optimizerEnd],
+        startPoint: .topLeading,
+        endPoint: .bottomTrailing
+    )
+    
+    static let shredder = LinearGradient(
+        colors: [.shredderStart, .shredderEnd],
         startPoint: .topLeading,
         endPoint: .bottomTrailing
     )
@@ -116,7 +126,9 @@ struct GradientStyles {
         case .uninstaller: return uninstaller
         case .deepClean: return deepClean
         case .cleaner: return cleaner
+        case .maintenance: return optimizer
         case .optimizer: return optimizer
+        case .shredder: return shredder
         case .largeFiles: return largeFiles
         case .fileExplorer: return fileExplorer
         case .trash: return trash
@@ -226,6 +238,15 @@ struct BackgroundStyles {
         startPoint: .topLeading,
         endPoint: .bottomTrailing
     )
+    // 10. 碎纸机 (深蓝/紫渐变 - 匹配设计图)
+    static let shredder = LinearGradient(
+        stops: [
+            .init(color: Color(red: 0.1, green: 0.3, blue: 0.6), location: 0.0), // 深蓝
+            .init(color: Color(red: 0.2, green: 0.2, blue: 0.5), location: 1.0)  // 蓝紫
+        ],
+        startPoint: .topLeading,
+        endPoint: .bottomTrailing
+    )
 }
 
 // MARK: - 模块枚举
@@ -234,7 +255,9 @@ enum AppModule: String, CaseIterable, Identifiable {
     case smartClean = "智能扫描"
     case cleaner = "系统垃圾"
     case deepClean = "深度清理"
-    case optimizer = "系统优化"
+    case maintenance = "系统维护" // Renamed from optimizer, maps to "Maintenance" UI
+    case optimizer = "系统优化"   // New module for "Optimization" UI
+    case shredder = "碎纸机"      // New module for "Shredder"
     case privacy = "隐私保护"
     case largeFiles = "大文件查找"
     case uninstaller = "应用卸载"
@@ -250,7 +273,9 @@ enum AppModule: String, CaseIterable, Identifiable {
         case .uninstaller: return "square.grid.2x2.fill"
         case .deepClean: return "wand.and.stars"
         case .cleaner: return "trash.fill"
-        case .optimizer: return "bolt.fill"
+        case .maintenance: return "wrench.and.screwdriver" // Icon for Maintenance
+        case .optimizer: return "bolt.fill" // Icon for Optimization
+        case .shredder: return "doc.text.fill" // Icon for Shredder
         case .largeFiles: return "magnifyingglass.circle.fill"
         case .fileExplorer: return "folder.fill"
         case .trash: return "trash.circle.fill"
@@ -265,7 +290,9 @@ enum AppModule: String, CaseIterable, Identifiable {
         case .uninstaller: return GradientStyles.uninstaller
         case .deepClean: return GradientStyles.deepClean
         case .cleaner: return GradientStyles.cleaner
-        case .optimizer: return GradientStyles.optimizer
+        case .maintenance: return GradientStyles.optimizer // Reuse Orange for maintenance? Or use Purple?
+        case .optimizer: return GradientStyles.optimizer // Use Orange for Optimization
+        case .shredder: return GradientStyles.shredder // Blue for Shredder
         case .largeFiles: return GradientStyles.largeFiles
         case .fileExplorer: return GradientStyles.fileExplorer
         case .trash: return GradientStyles.trash
@@ -281,7 +308,9 @@ enum AppModule: String, CaseIterable, Identifiable {
         case .uninstaller: return BackgroundStyles.uninstaller
         case .deepClean: return BackgroundStyles.deepClean
         case .cleaner: return BackgroundStyles.cleaner
-        case .optimizer: return BackgroundStyles.optimizer
+        case .maintenance: return BackgroundStyles.privacy // Purple for Maintenance
+        case .optimizer: return BackgroundStyles.privacy // Purple for Optimization (match design)
+        case .shredder: return BackgroundStyles.shredder // Blue/Purple for Shredder
         case .largeFiles: return BackgroundStyles.largeFiles
         case .fileExplorer: return BackgroundStyles.fileExplorer
         case .trash: return BackgroundStyles.trash
@@ -296,7 +325,9 @@ enum AppModule: String, CaseIterable, Identifiable {
         case .uninstaller: return "完全删除应用及其残留文件"
         case .deepClean: return "扫描已卸载应用的残留文件"
         case .cleaner: return "清理缓存和系统垃圾"
+        case .maintenance: return "运行系统维护脚本"
         case .optimizer: return "管理启动项，释放内存"
+        case .shredder: return "安全擦除敏感文件"
         case .largeFiles: return "发现并清理占用空间的大文件"
         case .fileExplorer: return "浏览和管理磁盘文件"
         case .trash: return "查看并清空废纸篷"

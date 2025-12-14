@@ -30,11 +30,17 @@ struct ContentView: View {
                         case .cleaner:
                             JunkCleanerView()
                                 .transition(.opacity.combined(with: .move(edge: .trailing)))
-                        case .optimizer:
+                        case .maintenance:
                             MaintenanceView()
+                                .transition(.opacity.combined(with: .move(edge: .trailing)))
+                        case .optimizer:
+                            OptimizerView()
                                 .transition(.opacity.combined(with: .move(edge: .trailing)))
                         case .largeFiles:
                             LargeFileView(selectedModule: $selectedModule)
+                                .transition(.opacity.combined(with: .move(edge: .trailing)))
+                        case .shredder:
+                            ShredderView()
                                 .transition(.opacity.combined(with: .move(edge: .trailing)))
                         case .fileExplorer:
                             FileExplorerView()

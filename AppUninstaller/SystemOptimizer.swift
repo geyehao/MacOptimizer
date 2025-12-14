@@ -267,13 +267,13 @@ class SystemOptimizer: ObservableObject {
                 success = result.success
                 message = result.success ? getSuccessMessage(for: type) : "执行失败: \(result.output)"
             } else {
-                let result = runCommand(type.command)
+                _ = runCommand(type.command)
                 success = true
                 message = getSuccessMessage(for: type)
             }
         }
         
-        await MainActor.run {
+        await MainActor.run { [message] in
             isOptimizing = false
             optimizationResult = message
         }

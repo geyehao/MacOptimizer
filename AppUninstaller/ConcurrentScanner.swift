@@ -100,7 +100,7 @@ func calculateSizeAsync(at url: URL, fileManager: FileManager = .default) async 
         
         // 批量收集文件 URL，减少锁竞争
         var fileURLs: [URL] = []
-        for case let fileURL as URL in enumerator {
+        while let fileURL = enumerator.nextObject() as? URL {
             fileURLs.append(fileURL)
         }
         
@@ -150,12 +150,13 @@ func estimateDirectorySize(at url: URL, sampleRate: Double = 0.1, fileManager: F
     var sampledCount = 0
     var totalCount = 0
     
-    for case let fileURL as URL in enumerator {
+    while let fileURL = enumerator.nextObject() as? URL {
         totalCount += 1
         
         // 按采样率采样
         if Double.random(in: 0...1) < sampleRate {
-            if let size = try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize {
+            if let resourceValues = try? fileURL.resourceValues(forKeys: [.fileSizeKey]),
+               let size = resourceValues.fileSize {
                 sampledSize += Int64(size)
                 sampledCount += 1
             }
@@ -228,7 +229,7 @@ func scanDirectoryConcurrently<T: Sendable>(
                     options: options
                 ) else { return items }
                 
-                for case let fileURL as URL in enumerator {
+                while let fileURL = enumerator.nextObject() as? URL {
                     // 检查是否在排除列表中
                     let relativePath = fileURL.path.replacingOccurrences(of: directory.path, with: "")
                     let shouldExclude = configuration.excludedPaths.contains { 

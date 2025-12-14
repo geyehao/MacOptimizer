@@ -35,7 +35,7 @@ class ScanServiceManager: ObservableObject {
         activeScans.insert(.junk)
         Task {
             await junkCleaner.scanJunk()
-            await MainActor.run {
+            _ = await MainActor.run {
                 activeScans.remove(.junk)
             }
         }
@@ -47,7 +47,7 @@ class ScanServiceManager: ObservableObject {
         activeScans.insert(.largeFiles)
         Task {
             await largeFileScanner.scan()
-            await MainActor.run {
+            _ = await MainActor.run {
                 activeScans.remove(.largeFiles)
             }
         }
@@ -59,7 +59,7 @@ class ScanServiceManager: ObservableObject {
         activeScans.insert(.deepClean)
         Task {
             await deepCleanScanner.startScan()
-            await MainActor.run {
+            _ = await MainActor.run {
                 activeScans.remove(.deepClean)
             }
         }
@@ -71,7 +71,7 @@ class ScanServiceManager: ObservableObject {
         activeScans.insert(.smartClean)
         Task {
             await smartCleanerService.scanAll()
-            await MainActor.run {
+            _ = await MainActor.run {
                 activeScans.remove(.smartClean)
             }
         }
@@ -83,7 +83,7 @@ class ScanServiceManager: ObservableObject {
         activeScans.insert(.duplicates)
         Task {
             await smartCleanerService.scanDuplicates()
-            await MainActor.run {
+            _ = await MainActor.run {
                 activeScans.remove(.duplicates)
             }
         }
@@ -116,33 +116,33 @@ class ScanServiceManager: ObservableObject {
                 // 并行启动所有扫描
                 group.addTask {
                     if !self.junkCleaner.isScanning {
-                        await MainActor.run { self.activeScans.insert(.junk) }
+                        _ = await MainActor.run { self.activeScans.insert(.junk) }
                         await self.junkCleaner.scanJunk()
-                        await MainActor.run { self.activeScans.remove(.junk) }
+                        _ = await MainActor.run { self.activeScans.remove(.junk) }
                     }
                 }
                 
                 group.addTask {
                     if !self.largeFileScanner.isScanning {
-                        await MainActor.run { self.activeScans.insert(.largeFiles) }
+                        _ = await MainActor.run { self.activeScans.insert(.largeFiles) }
                         await self.largeFileScanner.scan()
-                        await MainActor.run { self.activeScans.remove(.largeFiles) }
+                        _ = await MainActor.run { self.activeScans.remove(.largeFiles) }
                     }
                 }
                 
                 group.addTask {
                     if !self.deepCleanScanner.isScanning {
-                        await MainActor.run { self.activeScans.insert(.deepClean) }
+                        _ = await MainActor.run { self.activeScans.insert(.deepClean) }
                         await self.deepCleanScanner.startScan()
-                        await MainActor.run { self.activeScans.remove(.deepClean) }
+                        _ = await MainActor.run { self.activeScans.remove(.deepClean) }
                     }
                 }
                 
                 group.addTask {
                     if !self.smartCleanerService.isScanning {
-                        await MainActor.run { self.activeScans.insert(.smartClean) }
+                        _ = await MainActor.run { self.activeScans.insert(.smartClean) }
                         await self.smartCleanerService.scanAll()
-                        await MainActor.run { self.activeScans.remove(.smartClean) }
+                        _ = await MainActor.run { self.activeScans.remove(.smartClean) }
                     }
                 }
             }

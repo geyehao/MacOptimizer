@@ -64,6 +64,7 @@ SWIFT_FILES=(
     "${SOURCE_DIR}/JunkCleanerView.swift"
     "${SOURCE_DIR}/SystemOptimizer.swift"
     "${SOURCE_DIR}/MaintenanceView.swift"
+    "${SOURCE_DIR}/OptimizerView.swift"
     "${SOURCE_DIR}/MalwareScanner.swift"
     "${SOURCE_DIR}/MalwareView.swift"
     "${SOURCE_DIR}/PrivacyScannerService.swift"
@@ -71,6 +72,9 @@ SWIFT_FILES=(
     "${SOURCE_DIR}/SmartCleanerService.swift"
     "${SOURCE_DIR}/CircularActionButton.swift"
     "${SOURCE_DIR}/SmartCleanerView.swift"
+    "${SOURCE_DIR}/ShredderService.swift"
+    "${SOURCE_DIR}/ShredderView.swift"
+    "${SOURCE_DIR}/ShredderComponents.swift"
     "${SOURCE_DIR}/AppUninstallerApp.swift"
 )
 
@@ -132,7 +136,7 @@ mkdir -p "${BUILD_DIR}/app_x86_64"
 # 2. 编译 ARM64 (Apple Silicon) 版本
 echo -e "${YELLOW}[2/7] 编译 Apple Silicon (arm64) 版本...${NC}"
 swiftc \
-    -O -whole-module-optimization \
+    -O \
     -target arm64-apple-macos13.0 \
     -sdk $(xcrun --sdk macosx --show-sdk-path) \
     -parse-as-library \
@@ -143,7 +147,7 @@ echo -e "${GREEN}✓ Apple Silicon 编译完成${NC}"
 # 3. 编译 Intel (x86_64) 版本
 echo -e "${YELLOW}[3/7] 编译 Intel (x86_64) 版本...${NC}"
 swiftc \
-    -O -whole-module-optimization \
+    -O \
     -target x86_64-apple-macos13.0 \
     -sdk $(xcrun --sdk macosx --show-sdk-path) \
     -parse-as-library \

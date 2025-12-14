@@ -287,7 +287,7 @@ enum JunkType: String, CaseIterable, Identifiable {
 }
 
 // MARK: - 垃圾项模型
-class JunkItem: Identifiable, ObservableObject {
+class JunkItem: Identifiable, ObservableObject, @unchecked Sendable {
     let id = UUID()
     let type: JunkType
     let path: URL
@@ -366,7 +366,7 @@ class JunkCleaner: ObservableObject {
         // 默认全选
         allItems.forEach { $0.isSelected = true }
         
-        await MainActor.run {
+        await MainActor.run { [allItems] in
             self.junkItems = allItems
             isScanning = false
         }
@@ -416,7 +416,7 @@ class JunkCleaner: ObservableObject {
                     if type == .unusedDiskImages {
                         // 递归扫描目录寻找 .dmg / .iso
                         if let enumerator = self.fileManager.enumerator(at: url, includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey, .contentAccessDateKey], options: [.skipsHiddenFiles]) {
-                            for case let fileURL as URL in enumerator {
+                            while let fileURL = enumerator.nextObject() as? URL {
                                 let ext = fileURL.pathExtension.lowercased()
                                 if ["dmg", "iso", "pkg"].contains(ext) {
                                     // 检查是否"未使用" (例如超过 14 天未访问/修改)
@@ -674,7 +674,7 @@ class JunkCleaner: ObservableObject {
             ) else { return 0 }
             
             var fileURLs: [URL] = []
-            for case let fileURL as URL in enumerator {
+            while let fileURL = enumerator.nextObject() as? URL {
                 fileURLs.append(fileURL)
             }
             
@@ -758,7 +758,7 @@ class JunkCleaner: ObservableObject {
             }
         }
         
-        await MainActor.run {
+        await MainActor.run { [failedItems] in
             self.junkItems.removeAll { item in
                 selectedItems.contains { $0.id == item.id } && !failedItems.contains { $0.id == item.id }
             }

@@ -47,7 +47,7 @@ class AppScanner: ObservableObject {
         // 按名称排序
         scannedApps.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
         
-        await MainActor.run {
+        await MainActor.run { [scannedApps] in
             apps = scannedApps
             isScanning = false
         }
@@ -128,8 +128,9 @@ class AppScanner: ObservableObject {
         
         // 使用NSWorkspace获取图标
         return await MainActor.run {
-            NSWorkspace.shared.icon(forFile: url.path)
-        }
+            let icon = NSWorkspace.shared.icon(forFile: url.path)
+            return UnsafeTransfer(icon)
+        }.value
     }
     
     /// 扫描应用的残留文件
