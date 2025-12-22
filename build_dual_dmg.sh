@@ -33,41 +33,9 @@ SOURCE_DIR="AppUninstaller"
 DMG_ARM64="${APP_NAME}_AppleSilicon.dmg"
 DMG_X86_64="${APP_NAME}_Intel.dmg"
 
-# 源文件列表
+# 源文件列表 - 自动发现所有 Swift 文件
 SWIFT_FILES=(
-    "${SOURCE_DIR}/Models.swift"
-    "${SOURCE_DIR}/LocalizationManager.swift"
-    "${SOURCE_DIR}/AppScanner.swift"
-    "${SOURCE_DIR}/ResidualFileScanner.swift"
-    "${SOURCE_DIR}/FileRemover.swift"
-    "${SOURCE_DIR}/DiskSpaceManager.swift"
-    "${SOURCE_DIR}/DiskUsageView.swift"
-    "${SOURCE_DIR}/Styles.swift"
-    "${SOURCE_DIR}/LargeFileScanner.swift"
-    "${SOURCE_DIR}/LargeFileView.swift"
-    "${SOURCE_DIR}/TrashView.swift"
-    "${SOURCE_DIR}/DeepCleanScanner.swift"
-    "${SOURCE_DIR}/DeepCleanView.swift"
-    "${SOURCE_DIR}/FileExplorerService.swift"
-    "${SOURCE_DIR}/FileExplorerView.swift"
-    "${SOURCE_DIR}/SystemMonitorService.swift"
-    "${SOURCE_DIR}/ProcessService.swift"
-    "${SOURCE_DIR}/PortScannerService.swift"
-    "${SOURCE_DIR}/MonitorView.swift"
-    "${SOURCE_DIR}/ContentView.swift"
-    "${SOURCE_DIR}/AppDetailView.swift"
-    "${SOURCE_DIR}/NavigationSidebar.swift"
-    "${SOURCE_DIR}/JunkCleaner.swift"
-    "${SOURCE_DIR}/JunkCleanerView.swift"
-    "${SOURCE_DIR}/SystemOptimizer.swift"
-    "${SOURCE_DIR}/OptimizerView.swift"
-    "${SOURCE_DIR}/MalwareScanner.swift"
-    "${SOURCE_DIR}/MalwareView.swift"
-    "${SOURCE_DIR}/PrivacyScannerService.swift"
-    "${SOURCE_DIR}/PrivacyView.swift"
-    "${SOURCE_DIR}/SmartCleanerService.swift"
-    "${SOURCE_DIR}/SmartCleanerView.swift"
-    "${SOURCE_DIR}/AppUninstallerApp.swift"
+    "${SOURCE_DIR}"/*.swift
 )
 
 # 创建单架构 DMG 的函数

@@ -357,6 +357,8 @@ struct FileTypeSection: View {
             return loc.L("launch_agents")
         case .crashReports:
             return loc.L("crash_reports")
+        case .developer:
+            return loc.currentLanguage == .chinese ? "开发数据" : "Developer Data"
         }
     }
     

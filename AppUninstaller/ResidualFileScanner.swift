@@ -23,8 +23,39 @@ class ResidualFileScanner {
         residualFiles.append(contentsOf: scanCookies(appName: appName, bundleId: bundleId))
         residualFiles.append(contentsOf: scanLaunchAgents(appName: appName, bundleId: bundleId))
         residualFiles.append(contentsOf: scanCrashReports(appName: appName, bundleId: bundleId))
+        residualFiles.append(contentsOf: scanDeveloper(appName: appName, bundleId: bundleId))
         
         return residualFiles
+    }
+    
+    // MARK: - 开发数据 (Xcode/Simulator etc)
+    private func scanDeveloper(appName: String, bundleId: String?) -> [ResidualFile] {
+        var files: [ResidualFile] = []
+        let developerPath = homeDirectory.appendingPathComponent("Library/Developer")
+        
+        guard fileManager.fileExists(atPath: developerPath.path) else { return files }
+        
+        // 1. Generic Search in ~/Library/Developer
+        files.append(contentsOf: searchDirectory(developerPath, appName: appName, bundleId: bundleId, type: .developer))
+        
+        // 2. Specialized Logic for Xcode
+        if let bid = bundleId, bid == "com.apple.dt.Xcode" {
+            // ~Library/Developer/Xcode
+            let xcodeDataPath = developerPath.appendingPathComponent("Xcode")
+            if fileManager.fileExists(atPath: xcodeDataPath.path) {
+                let size = calculateSize(at: xcodeDataPath)
+                files.append(ResidualFile(path: xcodeDataPath, type: .developer, size: size))
+            }
+            
+            // ~Library/Developer/CoreSimulator
+            let simulatorPath = developerPath.appendingPathComponent("CoreSimulator")
+            if fileManager.fileExists(atPath: simulatorPath.path) {
+                 let size = calculateSize(at: simulatorPath)
+                 files.append(ResidualFile(path: simulatorPath, type: .developer, size: size))
+            }
+        }
+        
+        return files
     }
     
     // MARK: - 偏好设置

@@ -41,38 +41,63 @@ enum SidebarSection: String, CaseIterable {
 struct NavigationSidebar: View {
     @Binding var selectedModule: AppModule
     @ObservedObject var localization = LocalizationManager.shared
+    @State private var showSettings = false
+    @State private var showUpdatePopup = false
+    @StateObject private var updateService = UpdateCheckerService.shared
     
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // 顶部 Logo 区域
-            HStack(spacing: 12) {
-                ZStack {
-                    Circle()
-                        .fill(
-                            LinearGradient(
-                                colors: [Color(red: 0.8, green: 0.2, blue: 0.5), Color(red: 0.5, green: 0.1, blue: 0.6)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        .frame(width: 36, height: 36)
-                    
-                    Image(systemName: "sparkles")
-                        .foregroundColor(.white)
-                        .font(.system(size: 18, weight: .bold))
+            // 顶部 Logo 区域 (可点击检查更新)
+            Button(action: {
+                if updateService.hasUpdate {
+                    showUpdatePopup = true
                 }
-                
-                Text(localization.currentLanguage == .chinese ? "Mac优化大师" : "MacOptimizer")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(.white)
-                
-                Spacer()
-                
-
+            }) {
+                HStack(spacing: 12) {
+                    ZStack {
+                        Circle()
+                            .fill(
+                                LinearGradient(
+                                    colors: [Color(red: 0.8, green: 0.2, blue: 0.5), Color(red: 0.5, green: 0.1, blue: 0.6)],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                            .frame(width: 36, height: 36)
+                        
+                        Image(systemName: "sparkles")
+                            .foregroundColor(.white)
+                            .font(.system(size: 18, weight: .bold))
+                    }
+                    
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(localization.currentLanguage == .chinese ? "Mac优化大师" : "MacOptimizer")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundColor(.white)
+                        
+                        // 显示版本更新提示
+                        if updateService.hasUpdate {
+                            Text(localization.currentLanguage == .chinese ? "发现新版本" : "New Version")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Color.red)
+                                .cornerRadius(8)
+                                .padding(.top, 2)
+                        }
+                    }
+                    
+                    Spacer()
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 16)
+                .padding(.bottom, 12)
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 16)
-            .padding(.bottom, 12)
+            .buttonStyle(.plain)
+            .sheet(isPresented: $showUpdatePopup) {
+                UpdatePopupView()
+            }
             
             // 分组导航菜单
             ScrollView(showsIndicators: false) {
@@ -107,24 +132,39 @@ struct NavigationSidebar: View {
             
             Spacer()
             
-            // 底部版本信息
-            HStack(spacing: 12) {
-                // 语言切换按钮 (移动到此处)
-                Button(action: { localization.toggleLanguage() }) {
-                    HStack(spacing: 4) {
-                        Text(localization.currentLanguage.flag)
-                            .font(.system(size: 14))
+            // 底部版本信息 & 设置
+            VStack(spacing: 12) {
+                HStack {
+                    // 语言切换按钮
+                    Button(action: { localization.toggleLanguage() }) {
+                        HStack(spacing: 4) {
+                            Text(localization.currentLanguage.flag)
+                                .font(.system(size: 14))
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.white.opacity(0.1))
+                        .cornerRadius(6)
                     }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Color.white.opacity(0.1))
-                    .cornerRadius(6)
+                    .buttonStyle(.plain)
+                    
+                    Spacer()
+                    
+                    // 设置按钮
+                    Button(action: { showSettings = true }) {
+                        Image(systemName: "gearshape")
+                            .font(.system(size: 16))
+                            .foregroundColor(.white.opacity(0.7))
+                            .padding(6)
+                            .background(Color.white.opacity(0.1))
+                            .clipShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .help(localization.currentLanguage == .chinese ? "设置" : "Settings")
                 }
-                .buttonStyle(.plain)
-                .help(L("switch_language"))
                 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("v3.0.0")
+                HStack(spacing: 6) {
+                    Text("v3.0.3")
                         .font(.system(size: 10))
                         .foregroundColor(.white.opacity(0.3))
                     Text("Pro Version")
@@ -136,10 +176,13 @@ struct NavigationSidebar: View {
                                 endPoint: .trailing
                             )
                         )
+                    Spacer()
                 }
-                Spacer()
             }
             .padding(.horizontal, 16)
+            .sheet(isPresented: $showSettings) {
+                SettingsView()
+            }
             .padding(.bottom, 16)
         }
         .frame(width: 200)

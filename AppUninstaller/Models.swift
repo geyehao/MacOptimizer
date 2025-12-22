@@ -13,6 +13,7 @@ enum FileType: String, CaseIterable, Identifiable {
     case cookies = "Cookies"
     case launchAgents = "启动代理"
     case crashReports = "崩溃报告"
+    case developer = "开发数据"
     
     var id: String { rawValue }
     
@@ -28,6 +29,7 @@ enum FileType: String, CaseIterable, Identifiable {
         case .cookies: return "birthday.cake.fill"
         case .launchAgents: return "bolt.fill"
         case .crashReports: return "exclamationmark.triangle.fill"
+        case .developer: return "hammer.fill"
         }
     }
     
@@ -43,6 +45,7 @@ enum FileType: String, CaseIterable, Identifiable {
         case .cookies: return NSColor.systemYellow
         case .launchAgents: return NSColor.systemRed
         case .crashReports: return NSColor.systemGray
+        case .developer: return NSColor.systemBrown
         }
     }
 }
