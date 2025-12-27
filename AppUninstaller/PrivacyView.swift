@@ -74,12 +74,7 @@ struct PrivacyView: View {
                 .ignoresSafeArea()
             
             VStack(spacing: 0) {
-                // 顶部标题 - 仅在非初始状态或根据设计需求显示
-                if scanState != .initial {
-                    headerView
-                }
-                
-                // 主要内容区域
+                // 主要内容区域（各视图自带头部）
                 contentView
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }

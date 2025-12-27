@@ -198,4 +198,16 @@ class AppScanner: ObservableObject {
         
         return totalSize
     }
+    
+    /// 刷新单个应用的大小（清理后更新）
+    func refreshAppSize(for app: InstalledApp) async {
+        let newSize = calculateDirectorySize(app.path)
+        await MainActor.run {
+            app.size = newSize
+            // 触发列表更新
+            if let index = apps.firstIndex(where: { $0.id == app.id }) {
+                apps[index] = app 
+            }
+        }
+    }
 }

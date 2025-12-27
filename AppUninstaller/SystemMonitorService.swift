@@ -7,6 +7,16 @@ class SystemMonitorService: ObservableObject {
     @Published var memoryUsedString: String = "0 GB"
     @Published var memoryTotalString: String = "0 GB"
     
+    // Network Speed Monitoring
+    @Published var downloadSpeed: Double = 0.0 // bytes per second
+    @Published var uploadSpeed: Double = 0.0   // bytes per second
+    @Published var downloadSpeedHistory: [Double] = Array(repeating: 0, count: 20)
+    @Published var uploadSpeedHistory: [Double] = Array(repeating: 0, count: 20)
+    
+    private var lastBytesReceived: UInt64 = 0
+    private var lastBytesSent: UInt64 = 0
+    private var lastNetworkCheck: Date = Date()
+    
     private var timer: Timer?
     
     init() {
@@ -15,7 +25,7 @@ class SystemMonitorService: ObservableObject {
     
     func startMonitoring() {
         updateStats()
-        timer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+        timer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
             self?.updateStats()
         }
     }
@@ -23,6 +33,19 @@ class SystemMonitorService: ObservableObject {
     func stopMonitoring() {
         timer?.invalidate()
         timer = nil
+    }
+    
+    // 格式化网络速度
+    func formatSpeed(_ bytesPerSecond: Double) -> String {
+        if bytesPerSecond >= 1_000_000_000 {
+            return String(format: "%.1f GB/s", bytesPerSecond / 1_000_000_000)
+        } else if bytesPerSecond >= 1_000_000 {
+            return String(format: "%.1f MB/s", bytesPerSecond / 1_000_000)
+        } else if bytesPerSecond >= 1_000 {
+            return String(format: "%.1f KB/s", bytesPerSecond / 1_000)
+        } else {
+            return String(format: "%.0f B/s", bytesPerSecond)
+        }
     }
     
     private func updateStats() {
@@ -98,6 +121,56 @@ class SystemMonitorService: ObservableObject {
             }
         } catch {
             print("Memory Scan Error: \(error)")
+        }
+        
+        // Network Speed - 使用 netstat 获取网络流量
+        // 找到 en0 接口中有实际流量的行（第7列 Ibytes > 0）
+        let netTask = Process()
+        netTask.launchPath = "/bin/bash"
+        netTask.arguments = ["-c", "netstat -ib | awk '/en0/ && $7 > 0 {print $7, $10; exit}'"]
+        
+        let netPipe = Pipe()
+        netTask.standardOutput = netPipe
+        
+        do {
+            try netTask.run()
+            let data = netPipe.fileHandleForReading.readDataToEndOfFile()
+            if let output = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !output.isEmpty {
+                let parts = output.components(separatedBy: " ").filter { !$0.isEmpty }
+                if parts.count >= 2,
+                   let bytesIn = UInt64(parts[0]),
+                   let bytesOut = UInt64(parts[1]) {
+                    
+                    let now = Date()
+                    let timeDiff = now.timeIntervalSince(lastNetworkCheck)
+                    
+                    if timeDiff > 0 && lastBytesReceived > 0 {
+                        let downloadDelta = bytesIn > lastBytesReceived ? Double(bytesIn - lastBytesReceived) : 0
+                        let uploadDelta = bytesOut > lastBytesSent ? Double(bytesOut - lastBytesSent) : 0
+                        
+                        let downloadRate = downloadDelta / timeDiff
+                        let uploadRate = uploadDelta / timeDiff
+                        
+                        DispatchQueue.main.async {
+                            self.downloadSpeed = downloadRate
+                            self.uploadSpeed = uploadRate
+                            
+                            // 更新历史记录 (用于波形图)
+                            self.downloadSpeedHistory.removeFirst()
+                            self.downloadSpeedHistory.append(downloadRate)
+                            self.uploadSpeedHistory.removeFirst()
+                            self.uploadSpeedHistory.append(uploadRate)
+                        }
+                    }
+                    
+                    lastBytesReceived = bytesIn
+                    lastBytesSent = bytesOut
+                    lastNetworkCheck = now
+                }
+            }
+        } catch {
+            print("Network Scan Error: \(error)")
         }
     }
     

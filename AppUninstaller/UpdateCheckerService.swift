@@ -17,7 +17,7 @@ class UpdateCheckerService: ObservableObject {
     private let repoName = "MacOptimizer"
     
     var currentVersion: String {
-        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "3.0.3"
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "3.0.4"
     }
     
     private init() {}

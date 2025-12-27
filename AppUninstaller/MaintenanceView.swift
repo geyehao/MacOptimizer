@@ -9,6 +9,7 @@ enum MaintenanceTask: String, CaseIterable, Identifiable {
     case speedUpMail
     case rebuildSpotlight
     case repairPermissions
+    case repairApps
     case timeMachine
     
     var id: String { rawValue }
@@ -21,6 +22,7 @@ enum MaintenanceTask: String, CaseIterable, Identifiable {
         case .speedUpMail: return "加速邮件"
         case .rebuildSpotlight: return "为“聚焦”重建索引"
         case .repairPermissions: return "修复磁盘权限"
+        case .repairApps: return "修复应用程序"
         case .timeMachine: return "时间机器快照瘦身"
         }
     }
@@ -33,6 +35,7 @@ enum MaintenanceTask: String, CaseIterable, Identifiable {
         case .speedUpMail: return "Speed Up Mail"
         case .rebuildSpotlight: return "Reindex Spotlight"
         case .repairPermissions: return "Repair Disk Permissions"
+        case .repairApps: return "Repair Applications"
         case .timeMachine: return "Thin Time Machine Snapshots"
         }
     }
@@ -45,6 +48,7 @@ enum MaintenanceTask: String, CaseIterable, Identifiable {
         case .speedUpMail: return "envelope"
         case .rebuildSpotlight: return "magnifyingglass"
         case .repairPermissions: return "wrench.and.screwdriver"
+        case .repairApps: return "ladybug"
         case .timeMachine: return "clock.arrow.circlepath"
         }
     }
@@ -57,8 +61,9 @@ enum MaintenanceTask: String, CaseIterable, Identifiable {
         case .flushDns: return Color(red: 0.0, green: 0.5, blue: 1.0) // Blue
         case .speedUpMail: return Color(red: 0.0, green: 0.6, blue: 0.9) // Blue
         case .rebuildSpotlight: return Color(red: 0.2, green: 0.4, blue: 0.8) // Darker Blue
-        case .repairPermissions: return Color(red: 0.6, green: 0.6, blue: 0.65) // Grey
-        case .timeMachine: return Color(red: 0.2, green: 0.7, blue: 0.4) // Green
+        case .repairPermissions: return Color(red: 0.6, green: 0.6, blue: 0.65)
+        case .repairApps: return Color(red: 0.9, green: 0.4, blue: 0.3)
+        case .timeMachine: return Color(red: 0.2, green: 0.7, blue: 0.4)
         }
     }
     
@@ -76,6 +81,8 @@ enum MaintenanceTask: String, CaseIterable, Identifiable {
             return "如果 Spotlight 搜索变慢或无法找到文件，重建索引可以修复问题。此操作会让 macOS 重新扫描您的文件并建立新的搜索索引。"
         case .repairPermissions:
             return "验证并立即修复系统内损坏的文件和文件夹权限，确保应用程序可以正常运行。经常用于解决各种访问相关的问题。"
+        case .repairApps:
+            return "扫描并修复崩溃的应用程序。清理损坏的缓存和临时文件，重置应用权限，帮助应用恢复正常运行。"
         case .timeMachine:
             return "macOS 会创建本地时间机器快照占用磁盘空间。如果您不需要这些快照，可以删除它们来释放空间。"
         }
@@ -95,6 +102,8 @@ enum MaintenanceTask: String, CaseIterable, Identifiable {
             return "If Spotlight search is slow or missing files, rebuilding the index can fix it. This makes macOS rescan your files."
         case .repairPermissions:
             return "Verify and repair broken file permissions to ensure apps run correctly. Often used to solve access-related issues."
+        case .repairApps:
+            return "Scan and repair crashed applications. Clean corrupted caches and temp files, reset app permissions to help apps run normally."
         case .timeMachine:
             return "macOS creates local Time Machine snapshots that use disk space. Delete them if you don't need them."
         }
@@ -114,6 +123,8 @@ enum MaintenanceTask: String, CaseIterable, Identifiable {
             return ["搜索无法找到已知文件", "聚焦索引已损坏"]
         case .repairPermissions:
             return ["应用程序不正常", "无法移动或删除文件"]
+        case .repairApps:
+            return ["应用程序经常崩溃", "应用无法正常启动"]
         case .timeMachine:
             return ["需要释放磁盘空间", "不使用时间机器备份"]
         }
@@ -133,6 +144,8 @@ enum MaintenanceTask: String, CaseIterable, Identifiable {
             return ["Search can't find known files", "Spotlight index is corrupted"]
         case .repairPermissions:
             return ["Apps behave abnormally", "Cannot move or delete files"]
+        case .repairApps:
+            return ["Apps crash frequently", "Apps won't launch properly"]
         case .timeMachine:
             return ["Need to free disk space", "Not using Time Machine"]
         }
@@ -180,6 +193,8 @@ class MaintenanceService: ObservableObject {
                 return "重建 Spotlight 搜索索引可以修复搜索问题。"
             case .repairPermissions:
                 return "修复系统内损坏的文件权限，确保应用程序正常运行。"
+            case .repairApps:
+                return "扫描并修复崩溃的应用程序，帮助其恢复正常运行。"
             case .timeMachine:
                 return "删除本地时间机器快照以释放磁盘空间。"
             }
@@ -197,6 +212,8 @@ class MaintenanceService: ObservableObject {
                 return "Rebuilding Spotlight index can fix search problems."
             case .repairPermissions:
                 return "Repair broken file permissions to ensure apps run correctly."
+            case .repairApps:
+                return "Scan and repair crashed applications to help them run normally."
             case .timeMachine:
                 return "Delete local Time Machine snapshots to free disk space."
             }
@@ -241,6 +258,8 @@ class MaintenanceService: ObservableObject {
             await rebuildSpotlight()
         case .repairPermissions:
             await repairPermissions()
+        case .repairApps:
+            await repairApps()
         case .timeMachine:
             await cleanTimeMachine()
         }
@@ -477,6 +496,65 @@ class MaintenanceService: ObservableObject {
             deleteTask.waitUntilExit()
         }
     }
+    
+    // MARK: - 修复应用程序
+    private func repairApps() async {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let fileManager = FileManager.default
+        
+        // 1. 清理应用崩溃日志
+        let crashReportsPath = home.appendingPathComponent("Library/Logs/DiagnosticReports")
+        if let contents = try? fileManager.contentsOfDirectory(at: crashReportsPath, includingPropertiesForKeys: nil) {
+            for item in contents where item.pathExtension == "crash" || item.pathExtension == "ips" {
+                try? fileManager.removeItem(at: item)
+            }
+        }
+        
+        // 2. 清理损坏的 Saved Application State
+        let savedStatePath = home.appendingPathComponent("Library/Saved Application State")
+        if let contents = try? fileManager.contentsOfDirectory(at: savedStatePath, includingPropertiesForKeys: nil) {
+            for item in contents {
+                try? fileManager.removeItem(at: item)
+            }
+        }
+        
+        // 3. 清理应用 Containers 中的临时文件
+        let containersPath = home.appendingPathComponent("Library/Containers")
+        if let apps = try? fileManager.contentsOfDirectory(at: containersPath, includingPropertiesForKeys: nil) {
+            for app in apps {
+                let tempPath = app.appendingPathComponent("Data/tmp")
+                if let tempContents = try? fileManager.contentsOfDirectory(at: tempPath, includingPropertiesForKeys: nil) {
+                    for item in tempContents {
+                        try? fileManager.removeItem(at: item)
+                    }
+                }
+            }
+        }
+        
+        // 4. 重置 App Translocation 缓存
+        let translocatorReset = Process()
+        translocatorReset.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
+        translocatorReset.arguments = ["/System/Library/Frameworks/Security.framework/Versions/A/XPCServices/SecTranslocate.xpc/Contents/MacOS/SecTranslocate", "--reset"]
+        try? translocatorReset.run()
+        
+        // 5. 清理 Launch Services 注册的损坏应用
+        let lsregister = Process()
+        lsregister.executableURL = URL(fileURLWithPath: "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister")
+        lsregister.arguments = ["-kill", "-r", "-domain", "local", "-domain", "user"]
+        try? lsregister.run()
+        lsregister.waitUntilExit()
+        
+        // 6. 清理 Core Services 缓存
+        let cachesPaths = [
+            home.appendingPathComponent("Library/Caches/com.apple.helpd"),
+            home.appendingPathComponent("Library/Caches/com.apple.nsservicescache.plist"),
+        ]
+        for path in cachesPaths {
+            try? fileManager.removeItem(at: path)
+        }
+        
+        print("[repairApps] Crash logs cleaned, saved states cleared, Launch Services reset")
+    }
 }
 
 // MARK: - Maintenance View
@@ -520,25 +598,33 @@ struct MaintenanceView: View {
                     }) {
                         HStack(spacing: 4) {
                             Image(systemName: "chevron.left")
-                                .font(.system(size: 12, weight: .bold))
+                                .font(.system(size: 11, weight: .bold))
                             Text("简介")
-                                .font(.system(size: 13))
+                                .font(.system(size: 12))
                         }
                         .foregroundColor(.white.opacity(0.7))
                     }
                     .buttonStyle(.plain)
-                    .padding(.top, 20)
-                    .padding(.bottom, 20)
-                    .padding(.leading, 20)
+                    .padding(.top, 16)
+                    .padding(.bottom, 16)
+                    .padding(.leading, 16)
                     
                     ScrollView(showsIndicators: false) {
-                        VStack(spacing: 4) {
+                        VStack(spacing: 2) {
                             ForEach(MaintenanceTask.allCases) { task in
                                 taskRow(task)
                             }
                         }
-                        .padding(.horizontal, 10)
+                        .padding(.horizontal, 8)
                     }
+                    
+                    // 运行按钮移到左侧底部
+                    HStack {
+                        Spacer()
+                        runButton
+                        Spacer()
+                    }
+                    .padding(.vertical, 16)
                 }
                 .frame(width: geometry.size.width * 0.4)
                 .background(Color.black.opacity(0.1))
@@ -548,81 +634,77 @@ struct MaintenanceView: View {
                     // Header: Maintenance Label & Assistant
                     HStack {
                         Text("维护")
-                            .font(.system(size: 12))
+                            .font(.system(size: 11))
                             .foregroundColor(.white.opacity(0.5))
                         Spacer()
                         Button(action: {}) {
                             HStack(spacing: 4) {
                                 Circle()
                                     .fill(Color.blue)
-                                    .frame(width: 6, height: 6)
+                                    .frame(width: 5, height: 5)
                                 Text("助手")
-                                    .font(.system(size: 12))
+                                    .font(.system(size: 11))
                             }
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 4)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
                             .background(Capsule().fill(Color.white.opacity(0.1)))
                         }
                         .buttonStyle(.plain)
                     }
-                    .padding(.top, 20)
-                    .padding(.bottom, 30)
+                    .padding(.top, 16)
+                    .padding(.bottom, 20)
                     
                     // Title
                     Text(loc.currentLanguage == .chinese ? service.selectedTask.title : service.selectedTask.englishTitle)
-                        .font(.system(size: 32, weight: .bold))
+                        .font(.system(size: 24, weight: .bold))
                         .foregroundColor(.white)
-                        .padding(.bottom, 16)
+                        .padding(.bottom, 12)
                     
                     // Description
                     Text(loc.currentLanguage == .chinese ? service.selectedTask.description : service.selectedTask.englishDescription)
-                        .font(.system(size: 14))
+                        .font(.system(size: 12))
                         .foregroundColor(.white.opacity(0.9))
-                        .lineSpacing(4)
-                        .padding(.bottom, 30)
+                        .lineSpacing(3)
+                        .padding(.bottom, 20)
                         .fixedSize(horizontal: false, vertical: true)
                     
                     // Recommendations
                     Text(loc.currentLanguage == .chinese ? "使用推荐：" : "Recommended for:")
-                        .font(.system(size: 13))
+                        .font(.system(size: 11))
                         .foregroundColor(.white.opacity(0.5))
-                        .padding(.bottom, 10)
+                        .padding(.bottom, 8)
                     
-                    VStack(alignment: .leading, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 6) {
                         ForEach(loc.currentLanguage == .chinese ? service.selectedTask.recommendations : service.selectedTask.englishRecommendations, id: \.self) { rec in
-                            HStack(alignment: .top, spacing: 8) {
+                            HStack(alignment: .top, spacing: 6) {
                                 Text("•")
                                     .foregroundColor(.white.opacity(0.5))
                                 Text(rec)
                                     .foregroundColor(.white.opacity(0.8))
-                                    .font(.system(size: 13))
+                                    .font(.system(size: 11))
                             }
                         }
                     }
                     
                     Spacer()
                     
-                    // Footer: Last Run Date & Run Button
+                    // Footer: Last Run Date only (button moved to left panel)
                     HStack {
                         Spacer()
-                        VStack(spacing: 20) {
-                            Text(loc.currentLanguage == .chinese
-                                 ? "上次运行日期：\(service.getLastRunDate(for: service.selectedTask, chinese: true))"
-                                 : "Last ran: \(service.getLastRunDate(for: service.selectedTask, chinese: false))")
-                                .font(.system(size: 12))
-                                .foregroundColor(.white.opacity(0.4))
-                            
-                            runButton
-                        }
+                        Text(loc.currentLanguage == .chinese
+                             ? "上次运行：\(service.getLastRunDate(for: service.selectedTask, chinese: true))"
+                             : "Last ran: \(service.getLastRunDate(for: service.selectedTask, chinese: false))")
+                            .font(.system(size: 11))
+                            .foregroundColor(.white.opacity(0.4))
                         Spacer()
                     }
-                    .padding(.bottom, 40)
+                    .padding(.bottom, 20)
                 }
-                .padding(.horizontal, 40)
+                .padding(.horizontal, 30)
                 .frame(width: geometry.size.width * 0.6)
             }
         }
-        .background(BackgroundStyles.privacy) // Use purple-ish gradient matching design
+        .background(BackgroundStyles.privacy)
     }
     
     var runButton: some View {
@@ -636,8 +718,8 @@ struct MaintenanceView: View {
             ZStack {
                 Circle()
                     .fill(Color.white.opacity(0.15))
-                    .frame(width: 100, height: 100)
-                    .shadow(color: Color.black.opacity(0.2), radius: 10, x: 0, y: 5)
+                    .frame(width: 60, height: 60)
+                    .shadow(color: Color.black.opacity(0.2), radius: 8, x: 0, y: 4)
                 
                 Circle()
                     .stroke(
@@ -648,12 +730,11 @@ struct MaintenanceView: View {
                         ),
                         lineWidth: 1
                     )
-                    .frame(width: 98, height: 98)
+                    .frame(width: 58, height: 58)
                 
                 Text(loc.currentLanguage == .chinese ? "运行" : "Run")
-                    .font(.system(size: 18, weight: .medium))
+                    .font(.system(size: 12, weight: .medium))
                     .foregroundColor(.white)
-                    .shadow(radius: 2)
             }
         }
         .buttonStyle(.plain)
@@ -661,57 +742,62 @@ struct MaintenanceView: View {
     }
     
     func taskRow(_ task: MaintenanceTask) -> some View {
-        Button(action: { service.selectedTask = task }) {
-            HStack(spacing: 12) {
-                // Checkbox
-                Button(action: {
-                    if service.selectedTasks.contains(task) {
-                        service.selectedTasks.remove(task)
-                    } else {
-                        service.selectedTasks.insert(task)
-                    }
-                }) {
-                    ZStack {
-                        Circle()
-                            .stroke(Color.white.opacity(0.3), lineWidth: 1)
-                            .frame(width: 18, height: 18)
-                        
-                        if service.selectedTasks.contains(task) {
-                            Image(systemName: "checkmark.circle.fill")
-                                .font(.system(size: 18))
-                                .foregroundColor(.white)
-                        }
-                    }
+        HStack(spacing: 8) {
+            // Checkbox - 独立按钮，正确处理选中状态
+            Button(action: {
+                if service.selectedTasks.contains(task) {
+                    service.selectedTasks.remove(task)
+                } else {
+                    service.selectedTasks.insert(task)
                 }
-                .buttonStyle(.plain)
-                
-                // Icon
+            }) {
                 ZStack {
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(task.iconColor)
-                        .frame(width: 32, height: 32)
-                        .shadow(radius: 2)
+                    Circle()
+                        .stroke(service.selectedTasks.contains(task) ? Color.green : Color.white.opacity(0.4), lineWidth: 1.5)
+                        .frame(width: 16, height: 16)
                     
-                    Image(systemName: task.icon)
-                        .font(.system(size: 16))
-                        .foregroundColor(.white)
+                    if service.selectedTasks.contains(task) {
+                        Circle()
+                            .fill(Color.green)
+                            .frame(width: 16, height: 16)
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundColor(.white)
+                    }
                 }
-                
-                // Title
-                Text(task.title)
-                    .font(.system(size: 13, weight: .regular))
-                    .foregroundColor(.white)
-                
-                Spacer()
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(service.selectedTask == task ? Color.white.opacity(0.15) : Color.clear)
-            )
+            .buttonStyle(.plain)
+            
+            // Icon + Title 可点击选择任务
+            Button(action: { service.selectedTask = task }) {
+                HStack(spacing: 8) {
+                    // Icon
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 5)
+                            .fill(task.iconColor)
+                            .frame(width: 26, height: 26)
+                        
+                        Image(systemName: task.icon)
+                            .font(.system(size: 12))
+                            .foregroundColor(.white)
+                    }
+                    
+                    // Title
+                    Text(task.title)
+                        .font(.system(size: 12, weight: .regular))
+                        .foregroundColor(.white)
+                    
+                    Spacer()
+                }
+            }
+            .buttonStyle(.plain)
         }
-        .buttonStyle(.plain)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(service.selectedTask == task ? Color.white.opacity(0.12) : Color.clear)
+        )
     }
     
     // MARK: - Running View
@@ -719,37 +805,56 @@ struct MaintenanceView: View {
         VStack(spacing: 30) {
             Spacer()
             
-            ZStack {
-                Circle()
-                    .fill(Color.pink.opacity(0.2))
-                    .frame(width: 180, height: 180)
-                Image(systemName: "wrench.and.screwdriver")
-                    .font(.system(size: 60))
-                    .foregroundColor(.pink)
-            }
-            
+            // 标题
             Text(loc.currentLanguage == .chinese ? "正在执行维护任务..." : "Running maintenance tasks...")
-                .font(.system(size: 24, weight: .bold))
+                .font(.title2)
                 .foregroundColor(.white)
             
-            if let currentTask = service.currentRunningTask {
-                HStack(spacing: 12) {
-                    Image(systemName: currentTask.icon)
-                        .foregroundColor(currentTask.iconColor)
-                        .font(.title2)
-                    Text(loc.currentLanguage == .chinese ? currentTask.title : currentTask.englishTitle)
-                        .font(.headline)
-                        .foregroundColor(.white)
-                    ProgressView()
-                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                        .scaleEffect(0.7)
+            // 任务列表进度
+            VStack(spacing: 12) {
+                ForEach(Array(service.selectedTasks).sorted { $0.rawValue < $1.rawValue }) { task in
+                    HStack(spacing: 12) {
+                        // 状态图标
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 5)
+                                .fill(task.iconColor)
+                                .frame(width: 28, height: 28)
+                            
+                            Image(systemName: task.icon)
+                                .font(.system(size: 12))
+                                .foregroundColor(.white)
+                        }
+                        
+                        // 任务名称
+                        Text(loc.currentLanguage == .chinese ? task.title : task.englishTitle)
+                            .font(.system(size: 13))
+                            .foregroundColor(.white)
+                        
+                        Spacer()
+                        
+                        // 状态
+                        if service.completedTasks.contains(task) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundColor(.green)
+                        } else if service.currentRunningTask == task {
+                            ProgressView()
+                                .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                .scaleEffect(0.7)
+                        } else {
+                            Image(systemName: "circle")
+                                .foregroundColor(.white.opacity(0.3))
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(service.currentRunningTask == task ? Color.white.opacity(0.1) : Color.clear)
+                    .cornerRadius(8)
                 }
-                .padding(.horizontal, 24)
-                .padding(.vertical, 12)
-                .background(Color.white.opacity(0.1))
-                .cornerRadius(10)
             }
+            .frame(maxWidth: 400)
+            .padding(.horizontal, 40)
             
+            // 进度文本
             Text("\(service.completedTasks.count) / \(service.selectedTasks.count)")
                 .font(.caption)
                 .foregroundColor(.white.opacity(0.6))

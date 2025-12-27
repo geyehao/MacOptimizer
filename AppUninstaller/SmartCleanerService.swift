@@ -930,6 +930,10 @@ class SmartCleanerService: ObservableObject {
     private func isOrphanedFile(bundleId: String, installedIds: Set<String>) -> Bool {
         let lowerBundleId = bundleId.lowercased()
         
+        // 0. 跳过以 . 开头的系统隐藏偏好设置文件
+        // 这些文件存储全局系统设置，如 .GlobalPreferences.plist（自然滚动、语言等）
+        if bundleId.hasPrefix(".") { return false }
+        
         // 1. 跳过所有 Apple 系统服务
         if lowerBundleId.hasPrefix("com.apple.") { return false }
         if lowerBundleId.hasPrefix("apple") { return false }
