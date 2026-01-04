@@ -459,11 +459,9 @@ struct PrivacyView: View {
             count: count,
             isSelected: selectedSidebarItem == item,
             isChecked: isAllSelected,
-            onCheckToggle: { toggleCategorySelection(item) }
+            onCheckToggle: { toggleCategorySelection(item) },
+            onRowTap: { selectedSidebarItem = item }
         )
-        .onTapGesture {
-            selectedSidebarItem = item
-        }
     }
     
     private func isCategoryFullySelected(_ category: SidebarCategory) -> Bool {
@@ -490,21 +488,34 @@ struct PrivacyView: View {
     
     private func toggleCategorySelection(_ category: SidebarCategory) {
         let items = itemsForCategory(category)
+        print("🔘 [Toggle] Category: \(category.title), Items count: \(items.count)")
         
-        // Handle empty category - nothing to toggle
-        guard !items.isEmpty else { return }
+        guard !items.isEmpty else { 
+            print("⚠️ [Toggle] No items for category!")
+            return 
+        }
         
-        // Determine new selection state: if all selected, deselect all; otherwise select all
+        // If all are selected, unselect all; otherwise select all
         let allSelected = items.allSatisfy { $0.isSelected }
         let newValue = !allSelected
+        print("🔘 [Toggle] allSelected=\(allSelected), newValue=\(newValue)")
         
-        // Directly set the selection state for all matching items
+        // Directly set the isSelected value for all items in this category
+        var updatedCount = 0
         for i in 0..<service.privacyItems.count {
             let item = service.privacyItems[i]
             if items.contains(where: { $0.id == item.id }) {
                 service.privacyItems[i].isSelected = newValue
+                updatedCount += 1
+                // Also update children if any
+                if let children = service.privacyItems[i].children {
+                    for j in 0..<children.count {
+                        service.privacyItems[i].children![j].isSelected = newValue
+                    }
+                }
             }
         }
+        print("✅ [Toggle] Updated \(updatedCount) items to isSelected=\(newValue)")
         service.objectWillChange.send()
     }
     
@@ -831,13 +842,17 @@ struct PrivacyCategoryRow: View {
     let isSelected: Bool
     var isChecked: Bool = false
     var onCheckToggle: (() -> Void)? = nil
+    var onRowTap: (() -> Void)? = nil
     var isHidden: Bool = false
     
     var body: some View {
         if !isHidden {
             HStack(spacing: 10) {
-                // Checkbox
-                Button(action: { onCheckToggle?() }) {
+                // Checkbox - has its own button action
+                Button(action: { 
+                    print("🔘 [UI] Checkbox button clicked!")
+                    onCheckToggle?() 
+                }) {
                     ZStack {
                         RoundedRectangle(cornerRadius: 4)
                             .stroke(Color.white.opacity(0.5), lineWidth: 1.5)
@@ -856,37 +871,43 @@ struct PrivacyCategoryRow: View {
                 }
                 .buttonStyle(.plain)
                 
-                // App Icon or SF Symbol
-                if let nsImage = appIcon {
-                    Image(nsImage: nsImage)
-                        .resizable()
-                        .frame(width: 28, height: 28)
-                        .cornerRadius(6)
-                } else {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(iconBackgroundColor)
+                // Rest of the row - responds to row tap
+                HStack(spacing: 10) {
+                    // App Icon or SF Symbol
+                    if let nsImage = appIcon {
+                        Image(nsImage: nsImage)
+                            .resizable()
                             .frame(width: 28, height: 28)
-                        
-                        Image(systemName: icon)
-                            .font(.system(size: 14))
-                            .foregroundColor(.white)
+                            .cornerRadius(6)
+                    } else {
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(iconBackgroundColor)
+                                .frame(width: 28, height: 28)
+                            
+                            Image(systemName: icon)
+                                .font(.system(size: 14))
+                                .foregroundColor(.white)
+                        }
                     }
+                    
+                    Text(title)
+                        .foregroundColor(.white)
+                        .font(.system(size: 13))
+                    
+                    Spacer()
+                    
+                    Text("\(count) 项")
+                        .font(.caption)
+                        .foregroundColor(.white.opacity(0.6))
                 }
-                
-                Text(title)
-                    .foregroundColor(.white)
-                    .font(.system(size: 13))
-                
-                Spacer()
-                
-                Text("\(count) 项")
-                    .font(.caption)
-                    .foregroundColor(.white.opacity(0.6))
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    onRowTap?()
+                }
             }
             .padding(.vertical, 10)
             .padding(.horizontal, 12)
-            .contentShape(Rectangle())
             .background(isSelected ? Color.white.opacity(0.15) : Color.clear)
             .cornerRadius(8)
         }

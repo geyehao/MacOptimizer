@@ -593,80 +593,17 @@ class PrivacyScannerService: ObservableObject {
     }
     
     /// Reset TCC permissions using tccutil command
-    /// Note: This resets permissions to "ask again" state, not completely removes them
-    /// WARNING: Some permissions should NOT be reset as they affect system/app functionality
+    /// WARNING: This feature is DISABLED because tccutil reset resets ALL apps' permissions,
+    /// including our own app's FDA and ScreenCapture permissions, which breaks the app.
+    /// For now, permissions are VIEW-ONLY. Users should manage permissions in System Settings.
     private func resetTCCPermissions(_ permissions: [PrivacyItem]) async {
-        // Map display names to TCC service names
-        let tccServiceMap: [String: String] = [
-            "完全磁盘访问": "SystemPolicyAllFiles",
-            "文稿文件夹": "SystemPolicyDocumentsFolder",
-            "下载文件夹": "SystemPolicyDownloadsFolder",
-            "桌面文件夹": "SystemPolicyDesktopFolder",
-            "照片": "Photos",
-            "通讯录": "AddressBook",
-            "日历": "Calendar",
-            "提醒事项": "Reminders",
-            "麦克风": "Microphone",
-            "摄像头": "Camera",
-            "屏幕录制": "ScreenCapture",
-            "辅助功能": "Accessibility",
-            "蓝牙": "Bluetooth",
-            "自动化": "AppleEvents",
-            "位置信息": "Location",
-            "媒体资料库": "MediaLibrary"
-        ]
+        print("⚠️ [TCC] Permission reset is DISABLED to protect app functionality.")
+        print("   Permissions are view-only. Please manage permissions in System Settings.")
+        print("   Selected \(permissions.count) permissions for review.")
         
-        // CRITICAL: These permissions should NOT be auto-reset as they affect app/system functionality
-        let dangerousPermissions: Set<String> = [
-            "ScreenCapture",      // 会导致截屏时应用被隐藏
-            "Accessibility",      // 会破坏辅助功能
-            "SystemPolicyAllFiles" // 会导致应用失去 FDA 权限无法工作
-        ]
-        
-        var resetCount = 0
-        
-        for permission in permissions {
-            // Extract service type from displayPath (e.g., "微信 - 屏幕录制" -> "屏幕录制")
-            let parts = permission.displayPath.components(separatedBy: " - ")
-            guard parts.count >= 2 else { continue }
-            
-            let serviceDisplayName = parts.last ?? ""
-            
-            // Find matching TCC service
-            guard let tccService = tccServiceMap.first(where: { serviceDisplayName.contains($0.key) })?.value else {
-                print("⚠️ [TCC] Unknown service type: \(serviceDisplayName)")
-                continue
-            }
-            
-            // SKIP dangerous permissions that would break app functionality
-            if dangerousPermissions.contains(tccService) {
-                print("⚠️ [TCC] Skipping dangerous permission: \(tccService) (would break app functionality)")
-                continue
-            }
-            
-            // Run tccutil reset command
-            let process = Process()
-            process.launchPath = "/usr/bin/tccutil"
-            process.arguments = ["reset", tccService]
-            process.standardOutput = FileHandle.nullDevice
-            process.standardError = FileHandle.nullDevice
-            
-            do {
-                try process.run()
-                process.waitUntilExit()
-                
-                if process.terminationStatus == 0 {
-                    resetCount += 1
-                    print("✅ [TCC] Reset \(tccService)")
-                } else {
-                    print("❌ [TCC] Failed to reset \(tccService)")
-                }
-            } catch {
-                print("❌ [TCC] Error running tccutil: \(error)")
-            }
-        }
-        
-        print("🔒 [Clean] Reset \(resetCount) TCC permissions")
+        // Do NOT actually reset permissions as it would break the app
+        // The previous implementation using tccutil reset was too dangerous
+        // because it resets permissions for ALL apps, not just third-party apps.
     }
     
     // MARK: - Helper Scanning Methods
