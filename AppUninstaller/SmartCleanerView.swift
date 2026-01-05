@@ -207,44 +207,23 @@ struct SmartCleanerView: View {
         VStack {
             Spacer()
             
-            // 核心图标区域 - 匹配设计图
+            // 核心图标区域 - 匹配设计图（无圆圈光晕）
             ZStack {
-                // 底部紫色光晕
-                Circle()
-                    .fill(Color(red: 0.6, green: 0.3, blue: 0.9).opacity(0.2))
-                    .frame(width: 450, height: 450)
-                    .blur(radius: 60)
-                
-                // 显示器主图标
-                ZStack {
-                    // 主体
+                // 显示器主图标 - 使用自定义图片
+                if let imagePath = Bundle.main.path(forResource: "resubscribe_welcome", ofType: "png"),
+                   let nsImage = NSImage(contentsOfFile: imagePath) {
+                    Image(nsImage: nsImage)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 260, height: 260)
+                        .shadow(color: Color.pink.opacity(0.2), radius: 20, x: 0, y: 8)
+                } else {
+                    // 备用：使用应用图标
                     Image(nsImage: NSApp.applicationIconImage)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
                         .frame(width: 260, height: 260)
-                        .shadow(color: Color.pink.opacity(0.3), radius: 30, x: 0, y: 10)
-                    
-                    // 扫过光效 (Wipe/Scan animation effect)
-                    GeometryReader { geo in
-                        Rectangle()
-                            .fill(
-                                LinearGradient(
-                                    stops: [
-                                        .init(color: .clear, location: 0),
-                                        .init(color: .white.opacity(0.4), location: 0.5),
-                                        .init(color: .clear, location: 1)
-                                    ],
-                                    startPoint: .top,
-                                    endPoint: .bottom
-                                )
-                            )
-                            .frame(width: 300, height: 20)
-                            .rotationEffect(.degrees(-25))
-                            .offset(y: -50)
-                            .modifier(WipingAnimation())
-                    }
-                    .frame(width: 260, height: 260)
-                    .clipShape(RoundedRectangle(cornerRadius: 20))
+                        .shadow(color: Color.pink.opacity(0.2), radius: 20, x: 0, y: 8)
                 }
             }
             .padding(.bottom, 60)

@@ -1,4 +1,5 @@
 import SwiftUI
+import AVFoundation
 
 struct JunkCleanerView: View {
     // 扫描状态枚举
@@ -15,7 +16,6 @@ struct JunkCleanerView: View {
     @ObservedObject private var loc = LocalizationManager.shared
     
     // View State
-    @State private var scanState: ScanState = .initial
     @State private var showingDetails = false // 控制详情页显示
     @State private var selectedCategory: JunkType? // 选中的分类
     @State private var searchText = ""
@@ -24,11 +24,48 @@ struct JunkCleanerView: View {
     @State private var failedFiles: [String] = []
     @State private var showRetryWithAdmin = false
     @State private var cleanResult: (cleaned: Int64, failed: Int64, requiresAdmin: Bool)?
+    @State private var showCleaningFinished = false
+    @State private var wasScanning = false // 跟踪扫描状态变化
     
     // Animation State
     @State private var pulse = false
     @State private var animateScan = false
     @State private var isAnimating = false
+    
+    // 扫描状态 - 使用计算属性，根据 cleaner 状态动态计算
+    private var scanState: ScanState {
+        if cleaner.isScanning {
+            return .scanning
+        } else if cleaner.isCleaning {
+            return .cleaning
+        } else if showRetryWithAdmin {
+            return .cleaning
+        } else if showCleaningFinished {
+            return .finished
+        } else if hasScanResults {
+            return .completed
+        }
+        return .initial
+    }
+    
+    // 计算属性：检查是否已有扫描结果
+    private var hasScanResults: Bool {
+        return cleaner.totalSize > 0 || !cleaner.junkItems.isEmpty
+    }
+    
+    // 静态音频播放器引用，防止被提前释放
+    private static var soundPlayer: NSSound?
+    
+    // 播放扫描完成提示音
+    private func playScanCompleteSound() {
+        if let soundURL = Bundle.main.url(forResource: "CleanDidFinish", withExtension: "m4a") {
+            // 停止之前的播放
+            JunkCleanerView.soundPlayer?.stop()
+            // 创建新的播放器并保持引用
+            JunkCleanerView.soundPlayer = NSSound(contentsOf: soundURL, byReference: false)
+            JunkCleanerView.soundPlayer?.play()
+        }
+    }
     
     var body: some View {
         ZStack {
@@ -53,24 +90,25 @@ struct JunkCleanerView: View {
             }
         }
         .edgesIgnoringSafeArea(.all)
-        .onAppear {
-            if !cleaner.junkItems.isEmpty && !cleaner.isScanning && scanState == .initial {
-                scanState = .completed
-            } else if cleaner.isScanning {
-                scanState = .scanning
-            }
-        }
         .alert(loc.currentLanguage == .chinese ? "部分文件需要管理员权限" : "Some Files Require Admin Privileges", isPresented: $showRetryWithAdmin) {
             Button(loc.currentLanguage == .chinese ? "使用管理员权限删除" : "Delete with Admin", role: .destructive) {
-                 scanState = .finished
+                 showCleaningFinished = true
             }
             Button(loc.L("cancel"), role: .cancel) {
-                scanState = .finished
+                showCleaningFinished = true
             }
         } message: {
             Text(loc.currentLanguage == .chinese ?
                  "部分文件因权限不足无法删除。" :
                  "Some files could not be deleted due to insufficient permissions.")
+        }
+        // 监听扫描完成并播放提示音
+        .onReceive(cleaner.$isScanning) { isScanning in
+            if wasScanning && !isScanning && hasScanResults {
+                // 扫描从进行中变为完成，播放提示音
+                playScanCompleteSound()
+            }
+            wasScanning = isScanning
         }
     }
     
@@ -119,7 +157,7 @@ struct JunkCleanerView: View {
             VStack {
                 HStack {
                     Button(action: {
-                        scanState = .initial
+                        cleaner.reset()
                     }) {
                         HStack(spacing: 4) {
                             Image(systemName: "chevron.left")
@@ -194,96 +232,11 @@ struct JunkCleanerView: View {
                     progress: cleaner.scanProgress,
                     showProgress: true,
                     scanSize: ByteCountFormatter.string(fromByteCount: cleaner.totalSize, countStyle: .file),
-                    action: { scanState = .initial }
+                    action: { cleaner.stopScanning() }
                 )
                 .padding(.bottom, 60)
             }
-            .onReceive(cleaner.$isScanning) { isScanning in
-                if !isScanning && scanState == .scanning && !cleaner.hasPermissionErrors {
-                    // Only transition to completed if no permission errors
-                    Task { @MainActor in
-                        try? await Task.sleep(nanoseconds: 500_000_000)
-                        if scanState == .scanning {
-                            scanState = .completed
-                        }
-                    }
-                }
-            }
-            
-            // Permission Prompt Overlay (shows when scanning detects permission errors)
-            if cleaner.hasPermissionErrors && !cleaner.isScanning {
-                VStack(spacing: 24) {
-                    Spacer()
-                    
-                    VStack(spacing: 20) {
-                        ZStack {
-                            Circle()
-                                .fill(LinearGradient(colors: [Color.yellow.opacity(0.3), Color.orange.opacity(0.2)], startPoint: .top, endPoint: .bottom))
-                                .frame(width: 100, height: 100)
-                            
-                            Image(systemName: "lock.circle.fill")
-                                .font(.system(size: 50))
-                                .foregroundColor(.yellow)
-                        }
-                        
-                        Text(loc.currentLanguage == .chinese ? "需要访问权限" : "Access Required")
-                            .font(.title2)
-                            .bold()
-                            .foregroundColor(.white)
-                        
-                        Text(loc.currentLanguage == .chinese ? 
-                             "请在系统设置中授予\"完全磁盘访问权限\"后点击继续" : 
-                             "Please grant Full Disk Access in System Settings, then tap Continue")
-                            .font(.body)
-                            .foregroundColor(.secondaryText)
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal, 40)
-                        
-                        HStack(spacing: 16) {
-                            Button(action: {
-                                scanState = .initial
-                            }) {
-                                Text(loc.currentLanguage == .chinese ? "取消" : "Cancel")
-                                    .font(.headline)
-                                    .foregroundColor(.white)
-                                    .frame(width: 120, height: 44)
-                                    .background(Color.white.opacity(0.2))
-                                    .cornerRadius(22)
-                            }
-                            .buttonStyle(.plain)
-                            
-                            Button(action: {
-                                // Reset and retry scan
-                                cleaner.hasPermissionErrors = false
-                                startScan()
-                            }) {
-                                Text(loc.currentLanguage == .chinese ? "继续扫描" : "Continue")
-                                    .font(.headline)
-                                    .foregroundColor(.white)
-                                    .frame(width: 120, height: 44)
-                                    .background(LinearGradient(colors: [.purple, .blue], startPoint: .topLeading, endPoint: .bottomTrailing))
-                                    .cornerRadius(22)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                        .padding(.top, 8)
-                    }
-                    .padding(32)
-                    .background(
-                        RoundedRectangle(cornerRadius: 20)
-                            .fill(.ultraThinMaterial)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 20)
-                                    .stroke(Color.white.opacity(0.2), lineWidth: 1)
-                            )
-                    )
-                    .padding(.horizontal, 40)
-                    
-                    Spacer()
-                }
-                .background(Color.black.opacity(0.5))
-                .transition(.opacity)
-            }
+            // 不再需要 onReceive，因为 scanState 是计算属性，会自动更新
         }
     }
     
@@ -292,7 +245,7 @@ struct JunkCleanerView: View {
         VStack(spacing: 0) {
             // Navbar
             HStack {
-                Button(action: { scanState = .initial }) {
+                Button(action: { cleaner.reset(); showCleaningFinished = false }) {
                     HStack(spacing: 4) {
                         Image(systemName: "chevron.left")
                         Text(loc.currentLanguage == .chinese ? "重新开始" : "Start Over")
@@ -321,33 +274,8 @@ struct JunkCleanerView: View {
             
             Spacer()
             
-            if cleaner.totalSize == 0 && cleaner.hasPermissionErrors {
-                // Permission Issue (Keep partially yellow/orange)
-                ZStack {
-                    GlassyPurpleDisc(scale: 1.1)
-                    Image(systemName: "lock.circle.fill")
-                        .font(.system(size: 60))
-                        .foregroundColor(Color.yellow)
-                        .shadow(color: .orange, radius: 10)
-                }
-                
-                Spacer().frame(height: 40)
-                
-                Text(loc.currentLanguage == .chinese ? "需要访问权限" : "Access Required")
-                    .font(.title2)
-                    .bold()
-                    .foregroundColor(.white)
-                    .padding(.bottom, 8)
-                
-                Text(loc.currentLanguage == .chinese ? "请在弹窗种允许访问以扫描垃圾文件" : "Please allow access in the system dialog to scan for junk files.")
-                    .font(.body)
-                    .foregroundColor(.secondaryText)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 40)
-                
-                Spacer()
-                
-            } else {
+            // 始终显示正常的扫描结果（移除权限判断）
+            if true {
                 // Result State
                 ZStack {
                     GlassyPurpleDisc(scale: 1.1)
@@ -519,7 +447,7 @@ struct JunkCleanerView: View {
     private var finishedPage: some View {
         VStack {
              HStack {
-                Button(action: { scanState = .initial }) {
+                Button(action: { cleaner.reset(); showCleaningFinished = false }) {
                     HStack(spacing: 4) {
                         Image(systemName: "chevron.left")
                         Text(loc.currentLanguage == .chinese ? "重新开始" : "Start Over")
@@ -555,7 +483,7 @@ struct JunkCleanerView: View {
             
             Spacer()
             
-             Button(action: { scanState = .initial }) {
+             Button(action: { cleaner.reset(); showCleaningFinished = false }) {
                 Text(loc.currentLanguage == .chinese ? "完成" : "Done")
                     .padding(.horizontal, 40)
                     .padding(.vertical, 10)
@@ -568,19 +496,21 @@ struct JunkCleanerView: View {
     }
 
     func startScan() {
-        scanState = .scanning
+        // scanState 会通过 cleaner.isScanning 自动变为 .scanning
         Task {
             await cleaner.scanJunk()
         }
     }
     
     func startCleaning() {
-        scanState = .cleaning
+        // scanState 会通过 cleaner.isCleaning 自动变为 .cleaning
         Task {
+            cleaner.isCleaning = true
             let result = await cleaner.cleanSelected()
             cleanResult = (result.cleaned, result.failed, result.requiresAdmin)
             try? await Task.sleep(nanoseconds: 1_000_000_000)
-            scanState = .finished
+            cleaner.isCleaning = false
+            showCleaningFinished = true
         }
     }
 }

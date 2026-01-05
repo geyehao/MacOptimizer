@@ -92,8 +92,10 @@ enum JunkType: String, CaseIterable, Identifiable {
                 "~/Library/Cookies"
             ]
         case .systemCache:
-            // Removed system paths and ~/Library/Caches (handled by appCache)
-            return []
+            // 扫描用户级别的系统缓存
+            return [
+                "~/Library/Caches"
+            ]
         case .userLogs: 
             return [
                 "~/Library/Logs",
@@ -136,25 +138,16 @@ enum JunkType: String, CaseIterable, Identifiable {
         case .appCache:
             return [] // Dynamic scanning implemented in scanTypeConcurrent
         case .chatCache:
+            // 注意：仅扫描 ~/Library/Caches 和 ~/Library/Application Support 中的安全路径
+            // 不扫描 ~/Library/Containers/<other-app> 目录，因为会触发 macOS 权限弹窗
             return [
-                // 微信
-                "~/Library/Containers/com.tencent.xinWeChat/Data/Library/Application Support/com.tencent.xinWeChat",
-                "~/Library/Containers/com.tencent.xinWeChat/Data/Library/Caches",
+                // 微信 - 仅 Caches 目录
                 "~/Library/Caches/com.tencent.xinWeChat",
-                // QQ
-                "~/Library/Containers/com.tencent.qq/Data/Library/Application Support/QQ",
-                "~/Library/Containers/com.tencent.qq/Data/Library/Caches",
+                // QQ - 仅 Caches 目录
                 "~/Library/Caches/com.tencent.qq",
                 // Telegram
-                "~/Library/Group Containers/6N38VWS5BX.ru.keepcoder.Telegram/stable",
                 "~/Library/Caches/ru.keepcoder.Telegram",
                 "~/Library/Application Support/Telegram Desktop",
-                // 企业微信
-                "~/Library/Containers/com.tencent.WeWorkMac/Data/Library/Application Support",
-                "~/Library/Containers/com.tencent.WeWorkMac/Data/Library/Caches",
-                // 钉钉
-                "~/Library/Containers/com.alibaba.DingTalkMac/Data/Library/Application Support",
-                "~/Library/Containers/com.alibaba.DingTalkMac/Data/Library/Caches",
                 // Slack
                 "~/Library/Caches/com.tinyspeck.slackmacgap",
                 "~/Library/Application Support/Slack/Service Worker/CacheStorage",
@@ -275,6 +268,7 @@ class JunkItem: Identifiable, ObservableObject, @unchecked Sendable {
 class JunkCleaner: ObservableObject {
     @Published var junkItems: [JunkItem] = []
     @Published var isScanning: Bool = false
+    @Published var isCleaning: Bool = false  // 添加清理状态
     @Published var scanProgress: Double = 0
     @Published var hasPermissionErrors: Bool = false
     @Published var currentScanningPath: String = "" // Add path tracking
@@ -288,6 +282,27 @@ class JunkCleaner: ObservableObject {
     
     var selectedSize: Int64 {
         junkItems.filter { $0.isSelected }.reduce(0) { $0 + $1.size }
+    }
+    
+    /// 重置所有状态
+    @MainActor
+    func reset() {
+        junkItems.removeAll()
+        isScanning = false
+        isCleaning = false
+        scanProgress = 0
+        hasPermissionErrors = false
+        currentScanningPath = ""
+        currentScanningCategory = ""
+    }
+    
+    /// 停止扫描
+    @MainActor
+    func stopScanning() {
+        isScanning = false
+        scanProgress = 0
+        currentScanningPath = ""
+        currentScanningCategory = ""
     }
     
     /// 扫描所有垃圾 - 使用多线程并发扫描优化
@@ -309,8 +324,6 @@ class JunkCleaner: ObservableObject {
         await progressTracker.setTotalTasks(totalTypes)
         
         // 使用 TaskGroup 并发扫描所有垃圾类型
-        var allItems: [JunkItem] = []
-        
         await withTaskGroup(of: (JunkType, ([JunkItem], Bool)).self) { group in
             for type in safeTypes {
                 group.addTask {
@@ -319,11 +332,20 @@ class JunkCleaner: ObservableObject {
                 }
             }
             
-            // 收集结果并更新进度
+            // 收集结果并更新进度 - 实时更新 junkItems 以显示累计大小
             for await (_, (typeItems, hasError)) in group {
-                allItems.append(contentsOf: typeItems)
                 if hasError {
                     await MainActor.run { self.hasPermissionErrors = true }
+                }
+                
+                // 实时追加结果到 junkItems（使 totalSize 实时更新）
+                if !typeItems.isEmpty {
+                    await MainActor.run {
+                        for item in typeItems {
+                            item.isSelected = true
+                        }
+                        self.junkItems.append(contentsOf: typeItems)
+                    }
                 }
                 
                 await progressTracker.completeTask()
@@ -336,10 +358,9 @@ class JunkCleaner: ObservableObject {
         }
         
         // 排序：按大小降序
-        allItems.sort { $0.size > $1.size }
-        
-        // 默认全选
-        allItems.forEach { $0.isSelected = true }
+        await MainActor.run {
+            self.junkItems.sort { $0.size > $1.size }
+        }
         
         // Ensure minimum 2 seconds scanning time for better UX
         let elapsed = Date().timeIntervalSince(startTime)
@@ -347,8 +368,7 @@ class JunkCleaner: ObservableObject {
             try? await Task.sleep(nanoseconds: UInt64((2.0 - elapsed) * 1_000_000_000))
         }
 
-        await MainActor.run { [allItems] in
-            self.junkItems = allItems
+        await MainActor.run {
             isScanning = false
         }
     }
@@ -576,66 +596,8 @@ class JunkCleaner: ObservableObject {
                     }
                     
                     if type == .appCache {
-                        let installedAppIds = self.getAllInstalledAppBundleIds()
-                        let userHome = self.fileManager.homeDirectoryForCurrentUser
-                        let cachesURL = userHome.appendingPathComponent("Library/Caches")
-                        
-                        // 1. Scan ~/Library/Caches
-                        if let contents = try? self.fileManager.contentsOfDirectory(at: cachesURL, includingPropertiesForKeys: [.fileSizeKey], options: [.skipsHiddenFiles]) {
-                            for fileURL in contents {
-                                let filename = fileURL.lastPathComponent
-                                // Match against installed Bundle IDs or common patterns
-                                // Optimization: Check if it LOOKS like a bundle ID (contains dots) AND matches valid chars
-                                // If it matches an installed ID, definitely yes.
-                                // If it starts with com., and we want to be aggressive?
-                                
-                                let isMatch = installedAppIds.contains { appId in
-                                    filename == appId || filename.lowercased() == appId.lowercased()
-                                }
-                                
-                                // Heuristic: If it has "com." or "org." and is a directory, it's likely an app cache.
-                                // But filtering by installed apps is safer as per user request "get all installed apps".
-                                // However, user might have uninstalled apps residuals? That's "Broken Preferences" or similar.
-                                // Let's stick to "Installed Apps" to be precise + safe.
-                                
-                                if isMatch {
-                                    await MainActor.run { 
-                                        self.currentScanningPath = fileURL.path 
-                                        self.currentScanningCategory = type.rawValue
-                                    }
-                                    let size = await self.calculateSizeAsync(at: fileURL)
-                                    if size > 0 {
-                                        items.append(JunkItem(type: type, path: fileURL, size: size))
-                                    }
-                                }
-                            }
-                        }
-                        
-                        // 2. Scan Containers for Sandboxed Apps
-                        let containersURL = userHome.appendingPathComponent("Library/Containers")
-                        if let contents = try? self.fileManager.contentsOfDirectory(at: containersURL, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) {
-                            for containerURL in contents {
-                                let containerName = containerURL.lastPathComponent
-                                // Check if this container belongs to an installed app
-                                if installedAppIds.contains(where: { $0.lowercased() == containerName.lowercased() }) {
-                                    // Valid container. Look for Cache.
-                                    let cacheURL = containerURL.appendingPathComponent("Data/Library/Caches")
-                                    if self.fileManager.fileExists(atPath: cacheURL.path) {
-                                         // Check contents of this cache folder? Or the folder itself?
-                                         // Usually the folder itself is the "App Cache".
-                                         await MainActor.run { 
-                                             self.currentScanningPath = cacheURL.path 
-                                             self.currentScanningCategory = type.rawValue
-                                         }
-                                         let size = await self.calculateSizeAsync(at: cacheURL)
-                                         if size > 0 {
-                                             items.append(JunkItem(type: type, path: cacheURL, size: size))
-                                         }
-                                    }
-                                }
-                            }
-                        }
-                        
+                        // appCache 现在由 systemCache 处理 ~/Library/Caches
+                        // 不再单独扫描 Containers 以避免权限弹窗
                         return (items, false)
                     }
                     
@@ -667,9 +629,12 @@ class JunkCleaner: ObservableObject {
                             }
                         }
                         return (items, false)
-                    } catch {
-                        // 权限错误 - 返回 true
-                        return (items, true)
+                    } catch let error as NSError {
+                        // 只有真正的权限拒绝错误才标记为权限错误
+                        // 忽略目录不存在（NSFileReadNoSuchFileError = 260）等常见情况
+                        let isPermissionError = error.domain == NSCocoaErrorDomain && 
+                            (error.code == NSFileReadNoPermissionError || error.code == NSFileWriteNoPermissionError)
+                        return (items, isPermissionError)
                     }
                 }
             }

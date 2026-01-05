@@ -1,10 +1,31 @@
 import SwiftUI
 import AppKit
+import AVKit
 
 struct ContentView: View {
     @State private var selectedModule: AppModule = .smartClean
+    @State private var showIntro = true  // 启用开场视频
     
     var body: some View {
+        ZStack {
+            // 主内容
+            mainContent
+            
+            // 开场视频覆盖层
+            if showIntro {
+                IntroVideoView(onComplete: {
+                    withAnimation(.easeInOut(duration: 0.5)) {
+                        showIntro = false
+                    }
+                })
+                .transition(.opacity)
+                .zIndex(100)
+            }
+        }
+        .frame(minWidth: 1000, minHeight: 700)
+    }
+    
+    private var mainContent: some View {
         ZStack {
             // 全屏背景 (沉浸式)
             selectedModule.backgroundGradient
@@ -64,7 +85,120 @@ struct ContentView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .frame(minWidth: 1000, minHeight: 700)
+    }
+}
+
+// MARK: - 开场视频视图
+struct IntroVideoView: View {
+    let onComplete: () -> Void
+    @State private var player: AVPlayer?
+    
+    var body: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+            
+            if let player = player {
+                // 使用自定义的 VideoPlayerView 替代 SwiftUI 的 VideoPlayer
+                VideoPlayerView(player: player)
+                    .ignoresSafeArea()
+            }
+            
+            // 跳过按钮
+            VStack {
+                HStack {
+                    Spacer()
+                    Button(action: onComplete) {
+                        Text("跳过")
+                            .font(.system(size: 14))
+                            .foregroundColor(.white.opacity(0.7))
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
+                            .background(Color.white.opacity(0.1))
+                            .cornerRadius(20)
+                    }
+                    .buttonStyle(.plain)
+                    .padding(20)
+                }
+                Spacer()
+            }
+        }
+        .onAppear {
+            setupPlayer()
+        }
+        .onDisappear {
+            player?.pause()
+            player = nil
+        }
+    }
+    
+    private func setupPlayer() {
+        guard let url = Bundle.main.url(forResource: "Intro", withExtension: "mp4") else {
+            // 如果找不到视频，直接完成
+            onComplete()
+            return
+        }
+        
+        player = AVPlayer(url: url)
+        player?.play()
+        
+        // 视频播放完毕时回调
+        NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemDidPlayToEndTime,
+            object: player?.currentItem,
+            queue: .main
+        ) { _ in
+            onComplete()
+        }
+    }
+}
+
+// MARK: - 自定义视频播放器视图（使用 AVPlayerLayer 避免兼容性问题）
+struct VideoPlayerView: NSViewRepresentable {
+    let player: AVPlayer
+    
+    func makeNSView(context: Context) -> NSView {
+        let view = VideoLayerView()
+        view.player = player
+        return view
+    }
+    
+    func updateNSView(_ nsView: NSView, context: Context) {
+        if let view = nsView as? VideoLayerView {
+            view.player = player
+        }
+    }
+}
+
+// 使用 CALayer 的视图来承载 AVPlayerLayer
+class VideoLayerView: NSView {
+    var player: AVPlayer? {
+        didSet {
+            playerLayer.player = player
+        }
+    }
+    
+    private let playerLayer = AVPlayerLayer()
+    
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        setupLayer()
+    }
+    
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        setupLayer()
+    }
+    
+    private func setupLayer() {
+        wantsLayer = true
+        layer = CALayer()
+        playerLayer.videoGravity = .resizeAspect
+        layer?.addSublayer(playerLayer)
+    }
+    
+    override func layout() {
+        super.layout()
+        playerLayer.frame = bounds
     }
 }
 

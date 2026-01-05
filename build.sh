@@ -68,6 +68,39 @@ if [ -f "${SOURCE_DIR}/Application.icns" ]; then
     echo -e "${GREEN}✓ Application.icns 已复制 (用于菜单栏)${NC}"
 fi
 
+# 复制 PNG 图片资源
+for png_file in "${SOURCE_DIR}"/*.png; do
+    if [ -f "$png_file" ]; then
+        cp "$png_file" "${BUILD_DIR}/${BUNDLE_NAME}/Contents/Resources/"
+    fi
+done
+PNG_COUNT=$(ls -1 "${SOURCE_DIR}"/*.png 2>/dev/null | wc -l | tr -d ' ')
+if [ "$PNG_COUNT" -gt 0 ]; then
+    echo -e "${GREEN}✓ 已复制 ${PNG_COUNT} 个 PNG 图片资源${NC}"
+fi
+
+# 复制音频资源 (m4a)
+for audio_file in "${SOURCE_DIR}"/*.m4a; do
+    if [ -f "$audio_file" ]; then
+        cp "$audio_file" "${BUILD_DIR}/${BUNDLE_NAME}/Contents/Resources/"
+    fi
+done
+AUDIO_COUNT=$(ls -1 "${SOURCE_DIR}"/*.m4a 2>/dev/null | wc -l | tr -d ' ')
+if [ "$AUDIO_COUNT" -gt 0 ]; then
+    echo -e "${GREEN}✓ 已复制 ${AUDIO_COUNT} 个音频资源${NC}"
+fi
+
+# 复制视频资源 (mp4)
+for video_file in "${SOURCE_DIR}"/*.mp4; do
+    if [ -f "$video_file" ]; then
+        cp "$video_file" "${BUILD_DIR}/${BUNDLE_NAME}/Contents/Resources/"
+    fi
+done
+VIDEO_COUNT=$(ls -1 "${SOURCE_DIR}"/*.mp4 2>/dev/null | wc -l | tr -d ' ')
+if [ "$VIDEO_COUNT" -gt 0 ]; then
+    echo -e "${GREEN}✓ 已复制 ${VIDEO_COUNT} 个视频资源${NC}"
+fi
+
 # 5. 编译 (Apple Silicon)
 echo -e "${YELLOW}[4/7] 正在编译 (Apple Silicon)...${NC}"
 

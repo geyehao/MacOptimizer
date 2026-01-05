@@ -35,7 +35,8 @@ class MenuBarManager: NSObject, ObservableObject {
             if let iconPath = Bundle.main.path(forResource: "Application", ofType: "icns"),
                let customIcon = NSImage(contentsOfFile: iconPath) {
                 customIcon.size = NSSize(width: 18, height: 18)
-                customIcon.isTemplate = true
+                // 不设置 isTemplate，保持图标原始颜色
+                customIcon.isTemplate = false
                 button.image = customIcon
             } else {
                 button.image = NSImage(systemSymbolName: "macpro.gen3", accessibilityDescription: "Mac优化大师")
