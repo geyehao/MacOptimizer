@@ -29,7 +29,7 @@ enum SidebarSection: String, CaseIterable {
         case .protection:
             return [.malware, .privacy]
         case .speed:
-            return [.optimizer, .maintenance, .monitor]
+            return [.optimizer, .maintenance]
         case .apps:
             return [.uninstaller, .updater]
         case .files:

@@ -86,13 +86,16 @@ struct LargeFileDetailsSplitView: View {
                 // Return button area
                 HStack {
                     Button(action: {
-                        presentationMode.wrappedValue.dismiss()
+                        // Fix: Reset scanner instead of dismissing (which exits app if root)
+                        withAnimation {
+                            scanner.reset()
+                        }
                     }) {
                         HStack(spacing: 4) {
                             Image(systemName: "chevron.left")
                             Text(loc.currentLanguage == .chinese ? "返回" : "Back")
                         }
-                        .foregroundColor(.secondaryText)
+                        .foregroundColor(.white.opacity(0.8)) // Brighter text on dark bg
                     }
                     .buttonStyle(.plain)
                     Spacer()
@@ -101,7 +104,6 @@ struct LargeFileDetailsSplitView: View {
                 
                 // Sidebar List
                 ScrollView {
-                    // Headers for sections could be added to match design perfectly
                     VStack(spacing: 2) {
                         groupHeader("All Files")
                         categoryRow(title: "All", isSelected: selectedCategory == "All")
@@ -129,7 +131,7 @@ struct LargeFileDetailsSplitView: View {
                 }
             }
             .frame(width: 200)
-            .background(Color.black.opacity(0.2))
+            .background(Color.white.opacity(0.05)) // Subtle transparent separator or just clear
             
             // Content
             VStack(spacing: 0) {
