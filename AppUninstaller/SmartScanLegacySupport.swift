@@ -156,43 +156,36 @@ struct AllCategoriesDetailSheet: View {
                 }) {
                     HStack(spacing: 4) {
                         Image(systemName: "chevron.left")
+                            .font(.system(size: 14, weight: .medium))
                         Text(loc.currentLanguage == .chinese ? "返回摘要" : "Back")
+                            .font(.system(size: 14, weight: .medium))
                     }
-                    .foregroundColor(.secondaryText)
+                    .foregroundColor(.white.opacity(0.8))
                 }
                 .buttonStyle(.plain)
+                
                 
                 Spacer()
                 
                 Text(loc.currentLanguage == .chinese ? "清理详情" : "Cleanup Details")
-                    .font(.headline)
+                    .font(.system(size: 14, weight: .semibold)) // Reduced from 16
                     .foregroundColor(.white)
                 
                 Spacer()
                 
-                HStack(spacing: 4) { Image(systemName: "chevron.left"); Text("Back") }.opacity(0)
+                // Placeholder for balance
+                HStack(spacing: 4) { Image(systemName: "chevron.left"); Text("Back") }
+                    .opacity(0)
             }
-            .padding()
-            .background(.ultraThinMaterial) // Glassmorphism Header
+            .padding(.horizontal, 20)
+            .padding(.vertical, 16)
+            // .background(.ultraThinMaterial) // Removed glass header for cleaner look
             
             // 直接使用左右布局
             allCategoriesOverview
         }
-        .frame(width: 900, height: 650)
-        .background(
-            ZStack {
-                Color(red: 0.1, green: 0.05, blue: 0.2) // Deep base
-                // Ambient glow
-                Circle()
-                    .fill(Color.purple.opacity(0.2))
-                    .blur(radius: 80)
-                    .offset(x: -200, y: -200)
-                Circle()
-                    .fill(Color.blue.opacity(0.2))
-                    .blur(radius: 80)
-                    .offset(x: 200, y: 200)
-            }
-        )
+        .frame(width: 960, height: 640) // Increased size (was 880x600)
+        .background(BackgroundStyles.smartScanSheet) // Use the new professional gradient
         .onAppear {
             if let initial = initialCategory {
                 if initial == .systemJunk {
@@ -214,11 +207,12 @@ struct AllCategoriesDetailSheet: View {
             VStack(alignment: .leading, spacing: 0) {
                 HStack {
                     Text(loc.currentLanguage == .chinese ? "扫描结果" : "Scan Results")
-                        .font(.headline)
-                        .foregroundColor(.white)
+                        .font(.system(size: 12, weight: .medium)) // Reduced from 13
+                        .foregroundColor(.white.opacity(0.6))
                     Spacer()
                 }
-                .padding()
+                .padding(.horizontal, 20)
+                .padding(.vertical, 12)
                 
                 ScrollView {
                     VStack(spacing: 8) {
@@ -319,10 +313,11 @@ struct AllCategoriesDetailSheet: View {
                 
 
                 
+                
                 Spacer()
             }
-            .frame(width: 280)
-            .background(.thinMaterial) // Glassy Sidebar
+            .frame(width: 300) // Increased width (was 260)
+            .background(Color.black.opacity(0.1)) // Subtle separation
             
             // 右侧详情区域 - 根据选择的分类显示内容
             if let mainCategory = selectedMainCategory {
@@ -362,16 +357,17 @@ struct AllCategoriesDetailSheet: View {
     private var systemJunkRightPane: some View {
         VStack(alignment: .leading, spacing: 0) {
             // 标题
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(loc.currentLanguage == .chinese ? "系统垃圾" : "System Junk")
-                    .font(.title)
-                    .bold()
+                    .font(.system(size: 18, weight: .bold)) // Reduced from 20
                     .foregroundColor(.white)
                 Text(loc.currentLanguage == .chinese ? "清理您的系统来获得最大的性能和释放自由空间。" : "Clean your system for best performance and free space.")
-                    .font(.subheadline)
-                    .foregroundColor(.secondaryText)
+                    .font(.system(size: 12)) // Reduced from 13
+                    .foregroundColor(.white.opacity(0.7))
             }
-            .padding()
+            .padding(.horizontal, 24)
+            .padding(.vertical, 16) // Reduced padding
+            .padding(.bottom, 4)
             
             if let subcategory = selectedSubcategory {
                 // 显示该子分类的文件列表
@@ -388,20 +384,21 @@ struct AllCategoriesDetailSheet: View {
                     .padding(.horizontal)
                     
                     Text(loc.currentLanguage == .chinese ? subcategory.rawValue : subcategory.englishName)
-                        .font(.headline)
+                        .font(.system(size: 14, weight: .semibold)) // Reduced from Headline
                         .foregroundColor(.white)
                         .padding(.horizontal)
                 }
                 
                 // 文件列表
                 ScrollView {
-                    LazyVStack(spacing: 8) {
+                    LazyVStack(spacing: 0) { // Removed spacing
                         if subcategory == .userCache {
                             // 特殊处理：按应用分组展示系统缓存
                             ForEach(service.appCacheGroups) { group in
                                 AppCacheGroupRow(group: group, service: service, onToggleFile: { file in
                                     service.toggleFileSelection(file: file, in: .userCache)
                                 })
+                                Divider().background(Color.white.opacity(0.05))
                             }
                             
                             // 同时也显示那些没有对应应用的散项
@@ -419,6 +416,7 @@ struct AllCategoriesDetailSheet: View {
                                     FileItemRow(file: file, showPath: true, service: service, onToggle: {
                                         service.toggleFileSelection(file: file, in: .userCache)
                                     })
+                                    Divider().background(Color.white.opacity(0.05))
                                 }
                             }
                         } else {
@@ -427,6 +425,7 @@ struct AllCategoriesDetailSheet: View {
                                 FileItemRow(file: file, showPath: true, service: service, onToggle: {
                                     service.toggleFileSelection(file: file, in: subcategory)
                                 })
+                                Divider().background(Color.white.opacity(0.05))
                             }
                         }
                     }
@@ -434,17 +433,24 @@ struct AllCategoriesDetailSheet: View {
                 }
             } else {
                 // 显示子分类列表
+                // 显示子分类列表
                 ScrollView {
-                    VStack(spacing: 12) {
+                    VStack(spacing: 0) { // Removed spacing
                         DrillDownCategoryRow(icon: "person.crop.circle.fill", title: loc.currentLanguage == .chinese ? "用户缓存文件" : "User Cache", size: service.sizeFor(category: .userCache), count: service.countFor(category: .userCache), color: .cyan, onTap: { selectedSubcategory = .userCache })
+                        Divider().background(Color.white.opacity(0.05))
                         DrillDownCategoryRow(icon: "internaldrive.fill", title: loc.currentLanguage == .chinese ? "系统缓存文件" : "System Cache", size: service.sizeFor(category: .systemCache), count: service.countFor(category: .systemCache), color: .blue, onTap: { selectedSubcategory = .systemCache })
+                        Divider().background(Color.white.opacity(0.05))
                         DrillDownCategoryRow(icon: "arrow.down.circle.fill", title: loc.currentLanguage == .chinese ? "旧更新" : "Old Updates", size: service.sizeFor(category: .oldUpdates), count: service.countFor(category: .oldUpdates), color: .orange, onTap: { selectedSubcategory = .oldUpdates })
+                        Divider().background(Color.white.opacity(0.05))
                         DrillDownCategoryRow(icon: "textformat.abc", title: loc.currentLanguage == .chinese ? "语言文件" : "Language Files", size: service.sizeFor(category: .languageFiles), count: service.countFor(category: .languageFiles), color: .purple, onTap: { selectedSubcategory = .languageFiles })
+                        Divider().background(Color.white.opacity(0.05))
                         DrillDownCategoryRow(icon: "doc.text.fill", title: loc.currentLanguage == .chinese ? "系统日志文件" : "System Logs", size: service.sizeFor(category: .systemLogs), count: service.countFor(category: .systemLogs), color: .green, onTap: { selectedSubcategory = .systemLogs })
+                        Divider().background(Color.white.opacity(0.05))
                         DrillDownCategoryRow(icon: "person.text.rectangle.fill", title: loc.currentLanguage == .chinese ? "用户日志文件" : "User Logs", size: service.sizeFor(category: .userLogs), count: service.countFor(category: .userLogs), color: .teal, onTap: { selectedSubcategory = .userLogs })
+                        Divider().background(Color.white.opacity(0.05))
                         DrillDownCategoryRow(icon: "exclamationmark.triangle.fill", title: loc.currentLanguage == .chinese ? "损坏的登录项" : "Broken Login Items", size: service.sizeFor(category: .brokenLoginItems), count: service.countFor(category: .brokenLoginItems), color: .red, onTap: { selectedSubcategory = .brokenLoginItems })
                     }
-                    .padding()
+                    .padding(.horizontal, 24) // Match header padding
                 }
             }
             
@@ -457,26 +463,26 @@ struct AllCategoriesDetailSheet: View {
     private func rightPaneFileList(for category: CleanerCategory) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             // 标题
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(loc.currentLanguage == .chinese ? category.rawValue : category.englishName)
-                    .font(.title)
-                    .bold()
+                    .font(.system(size: 18, weight: .bold)) // Reduced from Title
                     .foregroundColor(.white)
                 
                 let files = filesFor(category: category)
                 Text("\(files.count) " + (loc.currentLanguage == .chinese ? "个项目，共 " : "items, ") + ByteCountFormatter.string(fromByteCount: files.reduce(0) { $0 + $1.size }, countStyle: .file))
-                    .font(.subheadline)
+                    .font(.system(size: 12)) // Reduced from subheadline
                     .foregroundColor(.secondaryText)
             }
             .padding()
             
             // 文件列表
             ScrollView {
-                LazyVStack(spacing: 8) {
+                LazyVStack(spacing: 0) { // Removed spacing
                     ForEach(filesFor(category: category).sorted { $0.size > $1.size }, id: \.url) { file in
                         FileItemRow(file: file, showPath: true, service: service, onToggle: {
                             service.toggleFileSelection(file: file, in: category)
                         })
+                        Divider().background(Color.white.opacity(0.05))
                     }
                 }
                 .padding(.horizontal)
@@ -508,15 +514,14 @@ struct AllCategoriesDetailSheet: View {
     // MARK: - 病毒威胁右侧面板
     private var virusRightPane: some View {
         VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(loc.currentLanguage == .chinese ? "病毒威胁" : "Virus Threats")
-                    .font(.title)
-                    .bold()
+                    .font(.system(size: 18, weight: .bold)) // Reduced
                     .foregroundColor(.white)
                 Text(service.virusThreats.isEmpty ? 
                      (loc.currentLanguage == .chinese ? "未检测到威胁" : "No threats detected") :
                      "\(service.virusThreats.count) " + (loc.currentLanguage == .chinese ? "个威胁" : "threats found"))
-                    .font(.subheadline)
+                    .font(.system(size: 12)) // Reduced
                     .foregroundColor(service.virusThreats.isEmpty ? .green : .red)
             }
             .padding()
@@ -536,7 +541,7 @@ struct AllCategoriesDetailSheet: View {
                 .frame(maxWidth: .infinity)
             } else {
                 ScrollView {
-                    LazyVStack(spacing: 8) {
+                    LazyVStack(spacing: 0) {
                         ForEach(service.virusThreats, id: \.id) { threat in
                             HStack(spacing: 12) {
                                 Image(systemName: "exclamationmark.triangle.fill")
@@ -563,9 +568,10 @@ struct AllCategoriesDetailSheet: View {
                                     .foregroundColor(.red)
                                     .cornerRadius(4)
                             }
-                            .padding()
-                            .background(Color.white.opacity(0.05))
-                            .cornerRadius(10)
+                            .padding(.vertical, 8)
+                            .padding(.horizontal, 4)
+                            .contentShape(Rectangle())
+                            Divider().background(Color.white.opacity(0.05))
                         }
                     }
                     .padding(.horizontal)
@@ -580,19 +586,18 @@ struct AllCategoriesDetailSheet: View {
     // MARK: - 启动项右侧面板
     private var startupItemsRightPane: some View {
         VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(loc.currentLanguage == .chinese ? "启动项" : "Startup Items")
-                    .font(.title)
-                    .bold()
+                    .font(.system(size: 18, weight: .bold)) // Reduced
                     .foregroundColor(.white)
                 Text("\(service.startupItems.count) " + (loc.currentLanguage == .chinese ? "个项目会在开机时自动启动" : "items start automatically"))
-                    .font(.subheadline)
+                    .font(.system(size: 12)) // Reduced
                     .foregroundColor(.secondaryText)
             }
             .padding()
             
             ScrollView {
-                LazyVStack(spacing: 8) {
+                LazyVStack(spacing: 0) {
                     ForEach(service.startupItems, id: \.id) { item in
                         HStack(spacing: 12) {
                             // 勾选框
@@ -631,9 +636,10 @@ struct AllCategoriesDetailSheet: View {
                                 .foregroundColor(item.isEnabled ? .orange : .gray)
                                 .cornerRadius(4)
                         }
-                        .padding()
-                        .background(Color.white.opacity(0.05))
-                        .cornerRadius(10)
+                        .padding(.vertical, 8)
+                        .padding(.horizontal, 4)
+                        .contentShape(Rectangle())
+                        Divider().background(Color.white.opacity(0.05))
                     }
                 }
                 .padding(.horizontal)
@@ -647,19 +653,18 @@ struct AllCategoriesDetailSheet: View {
     // MARK: - 性能优化右侧面板
     private var performanceAppsRightPane: some View {
         VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(loc.currentLanguage == .chinese ? "性能优化" : "Performance")
-                    .font(.title)
-                    .bold()
+                    .font(.system(size: 18, weight: .bold)) // Reduced
                     .foregroundColor(.white)
                 Text("\(service.performanceApps.count) " + (loc.currentLanguage == .chinese ? "个应用正在消耗资源" : "apps consuming resources"))
-                    .font(.subheadline)
+                    .font(.system(size: 12)) // Reduced
                     .foregroundColor(.secondaryText)
             }
             .padding()
             
             ScrollView {
-                LazyVStack(spacing: 8) {
+                LazyVStack(spacing: 0) {
                     ForEach(service.performanceApps) { app in
                         HStack(spacing: 12) {
                             // 勾选框
@@ -701,9 +706,10 @@ struct AllCategoriesDetailSheet: View {
                             .background(Color.green.opacity(0.2))
                             .cornerRadius(4)
                         }
-                        .padding()
-                        .background(Color.white.opacity(app.isSelected ? 0.1 : 0.05))
-                        .cornerRadius(10)
+                        .padding(.vertical, 8)
+                        .padding(.horizontal, 4)
+                        .contentShape(Rectangle())
+                        Divider().background(Color.white.opacity(0.05))
                     }
                 }
                 .padding(.horizontal)
@@ -717,15 +723,14 @@ struct AllCategoriesDetailSheet: View {
     // MARK: - 应用更新右侧面板
     private var appUpdatesRightPane: some View {
         VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(loc.currentLanguage == .chinese ? "应用更新" : "App Updates")
-                    .font(.title)
-                    .bold()
+                    .font(.system(size: 18, weight: .bold)) // Reduced
                     .foregroundColor(.white)
                 Text(service.hasAppUpdates ? 
                      (loc.currentLanguage == .chinese ? "有可用更新" : "Updates available") :
                      (loc.currentLanguage == .chinese ? "所有应用已是最新" : "All apps up to date"))
-                    .font(.subheadline)
+                    .font(.system(size: 12)) // Reduced
                     .foregroundColor(service.hasAppUpdates ? .blue : .green)
             }
             .padding()
@@ -765,49 +770,55 @@ struct MainCategoryRow: View {
         Button(action: onTap) {
             HStack(spacing: 12) {
                 ZStack {
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(color.opacity(0.2))
-                        .frame(width: 40, height: 40)
+                    if isSelected {
+                        Circle() // Use Circle for selected state background like design
+                            .fill(color)
+                            .frame(width: 32, height: 32)
+                    } else {
+                        Circle()
+                            .fill(color.opacity(0.15))
+                            .frame(width: 32, height: 32)
+                    }
+                    
                     Image(systemName: icon)
-                        .font(.system(size: 18))
-                        .foregroundColor(color)
+                        .font(.system(size: 14))
+                        .foregroundColor(isSelected ? .white : color)
                 }
                 
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: 1) { // Reduced spacing
                     Text(title)
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(isSelected ? .white : .primary.opacity(0.9))
+                        .font(.system(size: 13)) // Reduced from 14
+                        .foregroundColor(isSelected ? .white : .white.opacity(0.9))
+                        .lineLimit(1) // Ensure single line
+                        .fixedSize(horizontal: false, vertical: true)
                     
                     if count > 0 {
                         Text("\(count)")
-                            .font(.caption2)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
+                            .font(.system(size: 9, weight: .medium)) // Reduced from 10
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
                             .background(Color.white.opacity(0.1))
-                            .cornerRadius(4)
-                            .foregroundColor(.secondaryText)
+                            .cornerRadius(3)
+                            .foregroundColor(.white.opacity(0.7))
                     }
                 }
                 
                 Spacer()
                 
                 Text(ByteCountFormatter.string(fromByteCount: size, countStyle: .file))
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 13)) // Regular weight
                     .foregroundColor(.white)
                 
-                Image(systemName: "chevron.right")
-                    .foregroundColor(.secondaryText)
-                    .font(.system(size: 12))
+                if isSelected {
+                    Image(systemName: "chevron.right")
+                        .foregroundColor(.white)
+                        .font(.system(size: 10))
+                }
             }
-            .padding(12)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(isSelected ? color.opacity(0.2) : Color.clear)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12)
-                            .stroke(isSelected ? color.opacity(0.5) : Color.white.opacity(0.05), lineWidth: 1)
-                    )
-            )
+            .padding(.horizontal, 16) // Reduced padding
+            .padding(.vertical, 10)
+            .background(isSelected ? Color.white.opacity(0.1) : Color.clear)
+            .cornerRadius(8)
             .contentShape(Rectangle()) // Ensure full area is clickable
         }
         .buttonStyle(.plain)
@@ -870,6 +881,7 @@ struct FileItemRow: View {
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(.white)
                 
+                
                 if file.isDirectory {
                     Button(action: {
                         toggleExpand()
@@ -887,12 +899,14 @@ struct FileItemRow: View {
                     .buttonStyle(.plain)
                 }
             }
-            .padding(12)
-            .background(Color.white.opacity(file.isSelected ? 0.1 : 0.05))
-            .cornerRadius(10)
+            .padding(.vertical, 8)
+            .padding(.horizontal, 4) // Minimal horizontal padding
+            .contentShape(Rectangle()) // Full area clickable
             .onTapGesture {
                 if file.isDirectory {
                     toggleExpand()
+                } else {
+                    onToggle?()
                 }
             }
             
@@ -970,9 +984,8 @@ struct AppCacheGroupRow: View {
                         .font(.system(size: 12))
                         .foregroundColor(.secondaryText)
                 }
-                .padding(12)
-                .background(Color.white.opacity(0.05))
-                .cornerRadius(10)
+                .padding(.vertical, 8)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             
@@ -1038,12 +1051,10 @@ struct DrillDownCategoryRow: View {
                 Text(ByteCountFormatter.string(fromByteCount: size, countStyle: .file))
                     .font(.system(size: 14, weight: .bold))
                     .foregroundColor(.white)
-                    .frame(width: 90, alignment: .trailing)
+                    .frame(width: 80, alignment: .trailing)
             }
-            .padding(.vertical, 12)
-            .padding(.horizontal, 16)
-            .background(Color.white.opacity(0.05))
-            .cornerRadius(12)
+            .padding(.vertical, 12) // Slightly more padding for main rows
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }

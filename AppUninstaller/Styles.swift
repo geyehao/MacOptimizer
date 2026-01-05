@@ -323,6 +323,16 @@ struct BackgroundStyles {
         startPoint: .topLeading,
         endPoint: .bottomTrailing
     )
+    
+    // 12. 智能扫描详情页背景 (柔和的紫靛色渐变 - 匹配设计图)
+    static let smartScanSheet = LinearGradient(
+        stops: [
+            .init(color: Color(red: 0.25, green: 0.20, blue: 0.45), location: 0.0), // 深紫
+            .init(color: Color(red: 0.15, green: 0.15, blue: 0.35), location: 1.0)  // 深靛
+        ],
+        startPoint: .top,
+        endPoint: .bottom
+    )
 }
 
 // MARK: - 模块枚举

@@ -243,175 +243,333 @@ struct SmartCleanerView: View {
         }
     }
 
-    // MARK: - Scanning Page (Block Grid Layout)
+    // MARK: - Scanning Page (3-Column Layout)
     private var scanningPage: some View {
-        VStack(spacing: 0) {
-            // Grid of scan blocks - 8 categories (4x2)
-            VStack(spacing: 16) {
-                // Row 1
-                let row1: [CleanerCategory] = [.systemJunk, .duplicates, .similarPhotos, .largeFiles]
-                HStack(spacing: 16) {
-                    ForEach(row1, id: \.self) { cat in
-                        createScanBlock(for: cat)
-                    }
-                }
+        VStack {
+            // Title & Subtitle for Scanning - Added per user request
+            VStack(spacing: 12) {
+                Text(loc.currentLanguage == .chinese ? "正在查看它..." : "Checking it...")
+                    .font(.system(size: 28, weight: .medium))
+                    .foregroundColor(.white)
                 
-                // Row 2
-                let row2: [CleanerCategory] = [.virus, .startupItems, .performanceApps, .appUpdates]
-                HStack(spacing: 16) {
-                    ForEach(row2, id: \.self) { cat in
-                        createScanBlock(for: cat)
-                    }
-                }
+                Text(loc.currentLanguage == .chinese ? "稍等片刻。我们都希望它易如反掌。" : "Just a moment. We hope it's effortless.")
+                    .font(.system(size: 14))
+                    .foregroundColor(.white.opacity(0.6))
             }
-            .padding(.horizontal, 24)
             .padding(.top, 20)
+            .padding(.bottom, 40)
+            
+            threeColumnLayout(state: .scanning)
             
             Spacer()
         }
     }
     
-    // MARK: - Scanning State Helpers
-    
-    // Get list of already scanned categories based on scan order
-    // Order: systemJunk -> duplicates -> similarPhotos -> localizations -> largeFiles -> virus -> appUpdates -> startupItems -> performanceApps
-    private var scanOrder: [CleanerCategory] {
-        [.systemJunk, .duplicates, .similarPhotos, .localizations, .largeFiles, .virus, .appUpdates, .startupItems, .performanceApps]
-    }
-    
-    private func hasPassed(category: CleanerCategory) -> Bool {
-        guard let currentIndex = scanOrder.firstIndex(of: service.currentCategory),
-              let targetIndex = scanOrder.firstIndex(of: category) else {
-            return false
+    // MARK: - Results Page (3-Column Layout)
+    private var resultsPage: some View {
+        VStack {
+            // Title & Subtitle for Results
+            VStack(spacing: 12) {
+                Text(loc.currentLanguage == .chinese ? "好了，我发现的内容都在这里。" : "Okay, here's what I found.")
+                    .font(.system(size: 28, weight: .medium))
+                    .foregroundColor(.white)
+                
+                Text(loc.currentLanguage == .chinese ? "保持您的 Mac 干净、安全、性能优化的所有任务正在等候。立即运行！" : "All tasks to keep your Mac clean, safe, and optimized are waiting. Run now!")
+                    .font(.system(size: 14))
+                    .foregroundColor(.white.opacity(0.6))
+            }
+            .padding(.top, 20)
+            .padding(.bottom, 40)
+            
+            threeColumnLayout(state: .completed)
+            
+            Spacer()
         }
-        return currentIndex > targetIndex
     }
     
-    // Cleaning category (systemJunk)
-    private var isCleaningCategoryActive: Bool {
-        service.currentCategory == .systemJunk && service.isScanning
-    }
-    private var cleaningCompleted: Bool {
-        hasPassed(category: .systemJunk) || (!service.isScanning && service.systemJunkTotalSize > 0)
-    }
-    private var cleaningResultText: String {
-        ByteCountFormatter.string(fromByteCount: service.systemJunkTotalSize, countStyle: .file) + " " + (loc.currentLanguage == .chinese ? "的垃圾" : "Junk")
-    }
-    
-    // Protection category (virus)
-    private var isProtectionCategoryActive: Bool {
-        service.currentCategory == .virus && service.isScanning
-    }
-    private var protectionCompleted: Bool {
-        hasPassed(category: .virus) || (!service.isScanning && !isProtectionCategoryActive)
-    }
-    private var protectionResultText: String {
-        service.virusThreats.isEmpty ? (loc.currentLanguage == .chinese ? "无潜在威胁" : "No Threats") : "\(service.virusThreats.count) " + (loc.currentLanguage == .chinese ? "个威胁" : "Threats")
-    }
-    
-    // Performance category (startupItems, performanceApps)
-    private var isPerformanceCategoryActive: Bool {
-        [.startupItems, .performanceApps].contains(service.currentCategory) && service.isScanning
-    }
-    private var performanceCompleted: Bool {
-        hasPassed(category: .performanceApps) || (!service.isScanning && !isPerformanceCategoryActive)
-    }
-    private var performanceResultText: String {
-        let count = service.startupItems.count + service.performanceApps.count
-        return "\(count) " + (loc.currentLanguage == .chinese ? "个项目" : "Items")
-    }
-    
-    // Applications category (appUpdates)
-    private var isApplicationsCategoryActive: Bool {
-        service.currentCategory == .appUpdates && service.isScanning
-    }
-    private var applicationsCompleted: Bool {
-        hasPassed(category: .appUpdates) || (!service.isScanning && !isApplicationsCategoryActive)
-    }
-    private var applicationsResultText: String {
-        service.hasAppUpdates ? (loc.currentLanguage == .chinese ? "有更新可用" : "Updates Available") : (loc.currentLanguage == .chinese ? "无重要更新" : "No Updates")
-    }
-    
-    // Clutter category (duplicates, similarPhotos, largeFiles)
-    private var isClutterCategoryActive: Bool {
-        [.duplicates, .similarPhotos, .largeFiles].contains(service.currentCategory) && service.isScanning
-    }
-    private var clutterCompleted: Bool {
-        hasPassed(category: .largeFiles) || (!service.isScanning && !isClutterCategoryActive)
-    }
-    private var clutterResultText: String {
-        let size = service.sizeFor(category: .duplicates) + service.sizeFor(category: .similarPhotos) + service.sizeFor(category: .largeFiles)
-        return size > 0 ? ByteCountFormatter.string(fromByteCount: size, countStyle: .file) : (loc.currentLanguage == .chinese ? "无杂乱文件" : "No Clutter")
-    }
-
-    // MARK: - Cleaning Page (Block Grid Layout)
+    // MARK: - Cleaning/Finished Pages
     private var cleaningPage: some View {
-        VStack(spacing: 0) {
-            // Grid of cleaning blocks - 8 categories
-            VStack(spacing: 16) {
-                // Row 1
-                let row1: [CleanerCategory] = [.systemJunk, .duplicates, .similarPhotos, .largeFiles]
-                HStack(spacing: 16) {
-                    ForEach(row1, id: \.self) { cat in
-                        createCleaningBlock(for: cat)
-                    }
-                }
-                
-                // Row 2
-                let row2: [CleanerCategory] = [.virus, .startupItems, .performanceApps, .appUpdates]
-                HStack(spacing: 16) {
-                    ForEach(row2, id: \.self) { cat in
-                        createCleaningBlock(for: cat)
-                    }
-                }
-            }
-            .padding(.horizontal, 24)
-            .padding(.top, 20)
+        VStack {
+            threeColumnLayout(state: .cleaning)
             
             Spacer()
             
-            // Progress indicator
+            // Progress
             VStack(spacing: 12) {
                 ProgressView()
                     .scaleEffect(1.2)
                     .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                
                 Text(loc.currentLanguage == .chinese ? "正在清理中..." : "Cleaning in progress...")
-                    .font(.caption)
-                    .foregroundColor(.white.opacity(0.7))
+                    .font(.caption) .foregroundColor(.white.opacity(0.7))
             }
             .padding(.bottom, 40)
         }
     }
     
-    // MARK: - Results Page (Block Grid Layout - Same as Scanning/Cleaning)
-    private var resultsPage: some View {
-        VStack(spacing: 0) {
-            // Grid of result blocks - 8 categories
-            VStack(spacing: 16) {
-                // Row 1
-                let row1: [CleanerCategory] = [.systemJunk, .duplicates, .similarPhotos, .largeFiles]
-                HStack(spacing: 16) {
-                    ForEach(row1, id: \.self) { cat in
-                        createResultBlock(for: cat)
-                    }
-                }
+    private var cleaningFinishedPage: some View {
+        VStack {
+            threeColumnLayout(state: .finished)
+            Spacer()
+            // Main Button handles the "Back" or "Done" action via mainActionButton
+        }
+    }
+
+    // MARK: - 3-Column Layout Implementation
+    private func threeColumnLayout(state: ScanState) -> some View {
+        HStack(spacing: 40) {
+            // 1. Cleanup Group
+            itemColumn(
+                title: loc.currentLanguage == .chinese ? "清理" : "Cleanup",
+                iconName: "clean-up.866fafd0",
+                description: state == .scanning ? (loc.currentLanguage == .chinese ? "正在查找不需要的文件..." : "Searching for unwanted files...") : (loc.currentLanguage == .chinese ? "移除不需要的垃圾" : "Remove unwanted junk"),
+                categories: [.systemJunk, .duplicates, .similarPhotos, .largeFiles, .appUpdates],
+                state: state,
+                color: Color(red: 0.1, green: 0.6, blue: 0.9), // Blue
+                currentPath: (service.isScanning && [.systemJunk, .duplicates, .similarPhotos, .largeFiles, .appUpdates].contains(service.currentCategory)) ? service.currentScanPath : nil
+            )
+            
+            // 2. Protection Group
+            itemColumn(
+                title: loc.currentLanguage == .chinese ? "保护" : "Protection",
+                iconName: "protection.80f7790f",
+                description: state == .scanning ? (loc.currentLanguage == .chinese ? "正在确定潜在威胁..." : "Determining potential threats...") : (loc.currentLanguage == .chinese ? "消除潜在威胁" : "Eliminate potential threats"),
+                categories: [.virus],
+                state: state,
+                color: Color(red: 0.2, green: 0.8, blue: 0.5), // Green
+                currentPath: (service.isScanning && service.currentCategory == .virus) ? service.currentScanPath : nil
+            )
+            
+            // 3. Speed Group
+            itemColumn(
+                title: loc.currentLanguage == .chinese ? "速度" : "Speed",
+                iconName: "smart-scan.2f4ddf59", // Speedometer
+                description: state == .scanning ? (loc.currentLanguage == .chinese ? "定义合适的任务..." : "Defining suitable tasks...") : (loc.currentLanguage == .chinese ? "提升系统性能" : "Boost system performance"),
+                categories: [.startupItems, .performanceApps],
+                state: state,
+                color: Color(red: 0.9, green: 0.3, blue: 0.5), // Pink
+                currentPath: (service.isScanning && [.startupItems, .performanceApps].contains(service.currentCategory)) ? service.currentScanPath : nil
+            )
+        }
+        .padding(.horizontal, 40)
+    }
+
+    // MARK: - Column Item View
+    @ViewBuilder
+    private func itemColumn(
+        title: String,
+        iconName: String,
+        description: String,
+        categories: [CleanerCategory],
+        state: ScanState,
+        color: Color,
+        currentPath: String? = nil
+    ) -> some View {
+        VStack(spacing: 16) {
+            // Icon Area
+            ZStack {
+                // Background Glow/Shape - Enlarged
+                RoundedRectangle(cornerRadius: 30) // Adjusted corner radius for larger size
+                    .fill(
+                        LinearGradient(
+                            colors: [color.opacity(0.8), color.opacity(0.5)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(width: 120, height: 120) // Increased from 100x100
+                    .shadow(color: color.opacity(0.4), radius: 10, y: 5)
                 
-                // Row 2
-                let row2: [CleanerCategory] = [.virus, .startupItems, .performanceApps, .appUpdates]
-                HStack(spacing: 16) {
-                    ForEach(row2, id: \.self) { cat in
-                        createResultBlock(for: cat)
-                    }
+                // Image Icon - Enlarged
+                if let imagePath = Bundle.main.path(forResource: iconName, ofType: "png"),
+                   let nsImage = NSImage(contentsOfFile: imagePath) {
+                    Image(nsImage: nsImage)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 72, height: 72) // Increased from 64x64
+                        .modifier(ScanningAnimationModifier(isScanning: state == .scanning))
+                } else {
+                    Image(systemName: "questionmark.circle")
+                        .font(.system(size: 48)) // Increased from 40
+                        .foregroundColor(.white)
                 }
             }
-            .padding(.horizontal, 24)
-            .padding(.top, 20)
+            .frame(height: 140) // Increased from 120
             
-            Spacer()
+            // Status Check + Title
+            HStack(spacing: 6) {
+                if state == .scanning {
+                   if currentPath != nil {
+                       // Active scanning for this group
+                       ProgressView()
+                           .scaleEffect(0.6)
+                           .frame(width: 16, height: 16)
+                   } else {
+                       // Waiting
+                        Circle()
+                            .fill(Color.white.opacity(0.2))
+                            .frame(width: 8, height: 8)
+                   }
+                } else {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundColor(.white)
+                        .font(.system(size: 16))
+                }
+                
+                Text(title)
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundColor(.white)
+            }
+            
+            // Description
+            Text(description)
+                .font(.system(size: 13))
+                .foregroundColor(.white.opacity(0.6))
+                .multilineTextAlignment(.center)
+                .frame(height: 36)
+            
+            // Scanning Path / Result
+            if state == .scanning {
+                if let path = currentPath {
+                     Text(path)
+                        .font(.system(size: 11))
+                        .foregroundColor(.white.opacity(0.4))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .frame(height: 20)
+                } else {
+                     Text(loc.currentLanguage == .chinese ? "正在等待..." : "Waiting...")
+                        .font(.system(size: 11))
+                        .foregroundColor(.white.opacity(0.3))
+                        .frame(height: 20)
+                }
+            } else if state == .completed || state == .finished {
+                Group {
+                    if title == (loc.currentLanguage == .chinese ? "清理" : "Cleanup") {
+                        // Cleanup Result: Size
+                        let size = categories.reduce(0) { $0 + service.sizeFor(category: $1) }
+                        if size > 0 {
+                            Text(ByteCountFormatter.string(fromByteCount: size, countStyle: .file))
+                                .font(.system(size: 32, weight: .light))
+                                .foregroundColor(color)
+                        } else {
+                             Text(loc.currentLanguage == .chinese ? "好" : "Good")
+                                .font(.system(size: 32, weight: .light))
+                                .foregroundColor(Color.green)
+                        }
+                    } else if title == (loc.currentLanguage == .chinese ? "保护" : "Protection") {
+                         // Protection Result: Threats count
+                         let threats = service.virusThreats.count
+                         if threats > 0 {
+                             Text("\(threats)")
+                                 .font(.system(size: 32, weight: .light))
+                                 .foregroundColor(.red)
+                         } else {
+                             Text(loc.currentLanguage == .chinese ? "好" : "Good")
+                                .font(.system(size: 32, weight: .light))
+                                .foregroundColor(Color.green)
+                         }
+                    } else {
+                        // Speed Result: Items count
+                        let count = service.startupItems.count + service.performanceApps.count
+                        if count > 0 {
+                            Text("\(count)")
+                                .font(.system(size: 32, weight: .light))
+                                .foregroundColor(color)
+                        } else {
+                             Text(loc.currentLanguage == .chinese ? "好" : "Good")
+                                .font(.system(size: 32, weight: .light))
+                                .foregroundColor(Color.green)
+                        }
+                    }
+                }
+                .frame(height: 40)
+                
+                // Footer Status / Button
+                if title == (loc.currentLanguage == .chinese ? "清理" : "Cleanup") {
+                    Button(action: {
+                        initialDetailCategory = .systemJunk // or .userCache default
+                        showDetailSheet = true
+                    }) {
+                        Text(loc.currentLanguage == .chinese ? "查看详情..." : "View Details...")
+                            .font(.system(size: 12))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 4)
+                            .background(Color.white.opacity(0.1))
+                            .cornerRadius(12)
+                            .foregroundColor(.white.opacity(0.8))
+                    }
+                    .buttonStyle(.plain)
+                } else if title == (loc.currentLanguage == .chinese ? "保护" : "Protection") {
+                    if service.virusThreats.isEmpty {
+                        Text(loc.currentLanguage == .chinese ? "没有找到威胁" : "No threats found")
+                            .font(.system(size: 12))
+                            .foregroundColor(.white.opacity(0.6))
+                    } else {
+                        Text("\(service.virusThreats.count) " + (loc.currentLanguage == .chinese ? "个威胁" : "threats"))
+                            .font(.system(size: 12))
+                            .foregroundColor(.white.opacity(0.6))
+                    }
+                } else {
+                    let count = service.startupItems.count + service.performanceApps.count
+                    if count > 0 {
+                        Text("\(count) " + (loc.currentLanguage == .chinese ? "个任务可运行" : "tasks available"))
+                            .font(.system(size: 12))
+                            .foregroundColor(.white.opacity(0.6))
+                    } else {
+                        Text(loc.currentLanguage == .chinese ? "已优化" : "Optimized")
+                            .font(.system(size: 12))
+                            .foregroundColor(.white.opacity(0.6))
+                    }
+                }
+            } else {
+                 // Spacing for scanning/cleaning state where results aren't shown yet
+                 Spacer().frame(height: 60)
+            }
+        }
+        .frame(width: 180)
+    }
+
+    // MARK: - Animation Modifier
+    struct ScanningAnimationModifier: ViewModifier {
+        let isScanning: Bool
+        @State private var isAnimating = false
+        
+        func body(content: Content) -> some View {
+            content
+                .scaleEffect(isScanning && isAnimating ? 1.1 : 1.0)
+                .animation(isScanning ? Animation.easeInOut(duration: 0.8).repeatForever(autoreverses: true) : .default, value: isAnimating)
+                .onAppear {
+                    if isScanning { isAnimating = true }
+                }
+                .onChange(of: isScanning) { newValue in
+                    isAnimating = newValue
+                }
         }
     }
     
+    // MARK: - Rotating Ring Component
+    struct RotatingCircleRing: View {
+        @State private var rotation: Double = 0
+        
+        var body: some View {
+            Circle()
+                .trim(from: 0.2, to: 1)
+                .stroke(
+                    AngularGradient(
+                        gradient: Gradient(colors: [.white.opacity(0.8), .white.opacity(0.1)]),
+                        center: .center
+                    ),
+                    style: StrokeStyle(lineWidth: 3, lineCap: .round)
+                )
+                .rotationEffect(.degrees(rotation))
+                .onAppear {
+                    withAnimation(.linear(duration: 1.5).repeatForever(autoreverses: false)) {
+                        rotation = 360
+                    }
+                }
+        }
+    }
+
     // MARK: - Main Action Button (Scan Orb)
     @ViewBuilder
     private var mainActionButton: some View {
@@ -465,48 +623,45 @@ struct SmartCleanerView: View {
             .buttonStyle(.plain)
             
         case .scanning:
-            // Stop Orb
-            Button(action: { service.stopScanning() }) {
-                ZStack {
-                    // Outer Glow
-                    Circle()
-                        .fill(RadialGradient(
-                            colors: [Color.pink.opacity(0.4), .clear],
-                            center: .center,
-                            startRadius: 40,
-                            endRadius: 90
-                        ))
-                        .frame(width: 160, height: 160)
-                    
-                    // Main Orb
-                    Circle()
-                        .fill(
-                            LinearGradient(
-                                colors: [Color(red: 0.9, green: 0.3, blue: 0.5), Color(red: 0.7, green: 0.1, blue: 0.3)],
-                                startPoint: .top,
-                                endPoint: .bottom
-                            )
-                        )
-                        .frame(width: 100, height: 100)
-                        .shadow(color: .pink.opacity(0.6), radius: 15, x: 0, y: 8)
-                        .overlay(
-                            Circle()
-                                .strokeBorder(Color.white.opacity(0.3), lineWidth: 2)
-                        )
-                    
-                    VStack(spacing: 4) {
-                        Image(systemName: "stop.fill")
-                            .font(.system(size: 24))
+            // New Stop Button with Rotating Ring and Real-time Size
+            HStack(spacing: 20) {
+                // Stop Button Group
+                Button(action: { service.stopScanning() }) {
+                    ZStack {
+                        // Background Circle
+                        Circle()
+                            .fill(Color.white.opacity(0.15))
+                            .frame(width: 80, height: 80)
+                        
+                        // Rotating Progress Ring
+                        RotatingCircleRing()
+                            .frame(width: 80, height: 80)
+                        
+                        // Inner Button (Stop)
+                        Circle()
+                            .fill(LinearGradient(
+                                colors: [Color.white.opacity(0.2), Color.white.opacity(0.1)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ))
+                            .frame(width: 64, height: 64)
+                        
                         Text(loc.currentLanguage == .chinese ? "停止" : "Stop")
-                            .font(.system(size: 14, weight: .semibold))
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(.white)
                     }
-                    .foregroundColor(.white)
                 }
+                .buttonStyle(.plain)
+                
+                // Real-time Size Display
+                Text(ByteCountFormatter.string(fromByteCount: totalScannedSize, countStyle: .file))
+                    .font(.system(size: 20, weight: .light))
+                    .foregroundColor(.white.opacity(0.9))
             }
-            .buttonStyle(.plain)
-            
+            .padding(.bottom, 20)
+                         
         case .completed:
-            // Run Orb
+            // Run Orb (Updated text)
             Button(action: {
                 if service.performanceApps.contains(where: { $0.isSelected }) {
                     showRunningAppsSafetyAlert = true
@@ -515,7 +670,6 @@ struct SmartCleanerView: View {
                 }
             }) {
                 ZStack {
-                    // Outer Glow
                     Circle()
                         .fill(RadialGradient(
                             colors: [Color.blue.opacity(0.4), .clear],
@@ -525,7 +679,6 @@ struct SmartCleanerView: View {
                         ))
                         .frame(width: 160, height: 160)
                     
-                    // Main Orb
                     Circle()
                         .fill(
                             LinearGradient(
@@ -549,134 +702,41 @@ struct SmartCleanerView: View {
                         )
                     
                     VStack(spacing: 2) {
-                        Image(systemName: "rocket.fill")
-                            .font(.system(size: 24))
                         Text(loc.currentLanguage == .chinese ? "运行" : "Run")
-                            .font(.system(size: 16, weight: .bold))
+                            .font(.system(size: 20, weight: .bold))
+                            .foregroundColor(.white)
                     }
-                    .foregroundColor(.white)
                 }
             }
             .buttonStyle(.plain)
             
+        case .finished:
+             // Back/Done Orb
+             Button(action: {
+                 Task { service.resetAll(); showCleaningFinished = false }
+             }) {
+                 ZStack {
+                     Circle()
+                         .fill(RadialGradient(colors: [Color.green.opacity(0.4), .clear], center: .center, startRadius: 40, endRadius: 90))
+                         .frame(width: 160, height: 160)
+                     
+                     Circle()
+                         .fill(LinearGradient(colors: [Color.green, Color.green.opacity(0.7)], startPoint: .top, endPoint: .bottom))
+                         .frame(width: 100, height: 100)
+                         .shadow(color: .green.opacity(0.6), radius: 15, x: 0, y: 8)
+                     
+                     Text(loc.currentLanguage == .chinese ? "返回" : "Back")
+                         .font(.system(size: 18, weight: .bold))
+                         .foregroundColor(.white)
+                 }
+             }
+             .buttonStyle(.plain)
+             
         default:
             EmptyView()
         }
     }
-    
-    // MARK: - Finished Page (Block Grid with Success Overlay)
-    private var cleaningFinishedPage: some View {
-        VStack(spacing: 0) {
-            // Grid of finished blocks - 8 categories
-            VStack(spacing: 16) {
-                // Row 1
-                let row1: [CleanerCategory] = [.systemJunk, .duplicates, .similarPhotos, .largeFiles]
-                HStack(spacing: 16) {
-                    ForEach(row1, id: \.self) { cat in
-                        createFinishedBlock(for: cat)
-                    }
-                }
-                
-                // Row 2
-                let row2: [CleanerCategory] = [.virus, .startupItems, .performanceApps, .appUpdates]
-                HStack(spacing: 16) {
-                    ForEach(row2, id: \.self) { cat in
-                        createFinishedBlock(for: cat)
-                    }
-                }
-            }
-            .padding(.horizontal, 24)
-            .padding(.top, 20)
-            
-            Spacer()
-            
-            // Success message and back button
-            VStack(spacing: 16) {
-                Image(systemName: "checkmark.circle.fill")
-                    .font(.system(size: 50))
-                    .foregroundColor(.green)
-                    .shadow(color: .green.opacity(0.5), radius: 10)
-                
-                Text(loc.currentLanguage == .chinese ? "清理完成！" : "Cleaning Complete!")
-                    .font(.title2)
-                    .bold()
-                    .foregroundColor(.white)
-                
-                Button(action: {
-                    Task { service.resetAll(); showCleaningFinished = false }
-                }) {
-                    Text(loc.currentLanguage == .chinese ? "返回" : "Back")
-                        .font(.system(size: 14, weight: .medium))
-                        .padding(.horizontal, 30)
-                        .padding(.vertical, 10)
-                        .background(Color.white.opacity(0.15))
-                        .cornerRadius(20)
-                        .foregroundColor(.white)
-                }
-                .buttonStyle(.plain)
-            }
-            .padding(.bottom, 40)
-        }
-    }
-    
-    // MARK: - Page Helpers
-    @ViewBuilder
-    private func createScanBlock(for category: CleanerCategory) -> some View {
-        ScanBlockView(
-            category: category,
-            isActive: service.currentCategory == category && service.isScanning,
-            isCompleted: service.scannedCategories.contains(category),
-            title: getDisplayTitle(for: category),
-            resultText: getResultText(for: category),
-            subText: getSubText(for: category),
-            icon: category.icon,
-            gradient: getGradient(for: category),
-            scanningTitle: getScanningTitle(for: category),
-            currentPath: service.currentScanPath,
-            loc: loc,
-            viewDetailsAction: { initialDetailCategory = category; showDetailSheet = true }
-        )
-    }
-    
-    @ViewBuilder
-    private func createResultBlock(for category: CleanerCategory) -> some View {
-        ResultBlockView(
-            title: getDisplayTitle(for: category),
-            resultText: getResultText(for: category),
-            subText: getSubText(for: category),
-            icon: category.icon,
-            gradient: getGradient(for: category),
-            action: { initialDetailCategory = category; showDetailSheet = true }
-        )
-    }
-    
-    @ViewBuilder
-    private func createCleaningBlock(for category: CleanerCategory) -> some View {
-        CleaningBlockView(
-            title: getDisplayTitle(for: category),
-            resultText: getResultText(for: category),
-            subText: getCleaningSubText(for: category),
-            icon: category.icon,
-            gradient: getGradient(for: category),
-            cleaningTitle: getCleaningTitle(for: category),
-            isActive: service.cleaningCurrentCategory == category,
-            isCompleted: service.cleanedCategories.contains(category),
-            currentPath: service.cleaningDescription,
-            loc: loc,
-            viewDetailsAction: { initialDetailCategory = category; showDetailSheet = true }
-        )
-    }
-    
-    @ViewBuilder
-    private func createFinishedBlock(for category: CleanerCategory) -> some View {
-        FinishedBlockView(
-            title: getDisplayTitle(for: category),
-            resultText: getFinishedResultText(for: category),
-            icon: category.icon,
-            gradient: getGradient(for: category),
-            viewDetailsAction: { initialDetailCategory = category; showDetailSheet = true }
-        )
-    }
+
     
     // MARK: - Display Helpers
     private func getDisplayTitle(for category: CleanerCategory) -> String {
