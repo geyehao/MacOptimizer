@@ -14,7 +14,25 @@ struct SpaceLensView: View {
     // Selection for landing page
     @State private var selectedDiskPath: URL = URL(fileURLWithPath: "/")
     @State private var selectedDiskName: String = "mac"
+    
+    // Remove Functionality
+    @State private var showRemoveConfirmation = false
+    @State private var itemsToRemove: [FileNode] = []
+    
     @ObservedObject private var loc = LocalizationManager.shared
+    
+    // Selection Stats
+    @State private var showSelectedItemsPopover = false
+    
+    var selectedSize: Int64 {
+        guard let current = currentNode else { return 0 }
+        return current.children.filter { $0.isSelected }.reduce(0) { $0 + $1.size }
+    }
+    
+    var selectedItems: [FileNode] {
+        guard let current = currentNode else { return [] }
+        return current.children.filter { $0.isSelected }
+    }
     
     var body: some View {
         Group {
@@ -351,37 +369,84 @@ struct SpaceLensView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Color.clear)
                 .clipped()
-                .overlay(alignment: .bottom) {
-                     // Floating Remove Button (Overlay to ensure on top and position)
-                     Button(action: {
-                          // Remove Logic (Mock for now)
-                          print("Remove selected items")
-                     }) {
-                         ZStack {
-                             Circle()
-                                 .stroke(Color.white.opacity(0.3), lineWidth: 1)
-                                 .frame(width: 90, height: 90)
-                             
-                             Circle()
-                                 .fill(LinearGradient(colors: [Color.white.opacity(0.2), Color.white.opacity(0.05)], startPoint: .top, endPoint: .bottom))
-                                 .frame(width: 80, height: 80)
-                                 .overlay(
-                                     Circle()
-                                         .stroke(Color.white, lineWidth: 2)
-                                 )
-                                 .shadow(color: .black.opacity(0.2), radius: 10, x: 0, y: 5)
-                             
-                             Text(loc.currentLanguage == .chinese ? "移除" : "Remove")
-                                 .font(.system(size: 16, weight: .semibold))
-                                 .foregroundColor(.white)
+
+                 .overlay(alignment: .bottom) {
+                     HStack(spacing: 20) {
+                         // Floating Remove Button (Overlay to ensure on top and position)
+                         Button(action: {
+                              prepareForRemoval()
+                         }) {
+                             ZStack {
+                                 Circle()
+                                     .stroke(Color.white.opacity(0.3), lineWidth: 1)
+                                     .frame(width: 90, height: 90)
+                                 
+                                 Circle()
+                                     .fill(LinearGradient(colors: [Color.white.opacity(0.2), Color.white.opacity(0.05)], startPoint: .top, endPoint: .bottom))
+                                     .frame(width: 80, height: 80)
+                                     .overlay(
+                                         Circle()
+                                             .stroke(Color.white, lineWidth: 2)
+                                     )
+                                     .shadow(color: .black.opacity(0.2), radius: 10, x: 0, y: 5)
+                                 
+                                 Text(loc.currentLanguage == .chinese ? "移除" : "Remove")
+                                     .font(.system(size: 16, weight: .semibold))
+                                     .foregroundColor(.white)
+                             }
+                         }
+                         .buttonStyle(.plain)
+                         
+                         // Stats Bar
+                         if selectedSize > 0 {
+                             HStack(spacing: 0) {
+                                 Text(ByteCountFormatter.string(fromByteCount: selectedSize, countStyle: .file))
+                                     .font(.system(size: 14, weight: .regular))
+                                     .foregroundColor(.white.opacity(0.8))
+                                     .padding(.horizontal, 16)
+                                 
+                                 Divider()
+                                     .background(Color.white.opacity(0.2))
+                                     .frame(height: 20)
+                                 
+                                 Button(action: {
+                                     showSelectedItemsPopover.toggle()
+                                 }) {
+                                     Text(loc.currentLanguage == .chinese ? "查看所选内容" : "View Selected")
+                                         .font(.system(size: 13, weight: .medium))
+                                         .foregroundColor(.white)
+                                         .padding(.horizontal, 16)
+                                         .padding(.vertical, 10)
+                                         .contentShape(Rectangle())
+                                 }
+                                 .buttonStyle(.plain)
+                                 .popover(isPresented: $showSelectedItemsPopover, arrowEdge: .bottom) {
+                                     SelectedItemsList(items: selectedItems)
+                                 }
+                             }
+                             .background(Color.black.opacity(0.6))
+                             .background(.ultraThinMaterial)
+                             .cornerRadius(8)
+                             .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.1), lineWidth: 1))
                          }
                      }
-                     .buttonStyle(.plain)
                      .padding(.bottom, 40)
+                     .offset(x: -60) // Heuristic adjustment
+                 }
+
+            }
+            .overlay {
+                if showRemoveConfirmation {
+                    RemoveConfirmationView(
+                        items: itemsToRemove,
+                        onCancel: {
+                            showRemoveConfirmation = false
+                        },
+                        onConfirm: {
+                            deleteSelectedItems()
+                        }
+                    )
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color.clear)
-                .clipped()
             }
         }
     }
@@ -571,6 +636,63 @@ struct SpaceLensView: View {
         guard let node = node else { return nil }
         return NSWorkspace.shared.icon(forFile: node.url.path)
     }
+    
+    // MARK: - Remove Logic
+    func prepareForRemoval() {
+        // Collect selected items from current node's children
+        // We only support removing what is visible/selected in the list or the node itself?
+        // Usually, deletion operates on the selected checkboxes in the list.
+        guard let current = currentNode else { return }
+        
+        // Find visible children that are selected
+        let selected = current.children.filter { $0.isSelected }
+        
+        if !selected.isEmpty {
+            self.itemsToRemove = selected
+            self.showRemoveConfirmation = true
+        } else {
+            // Maybe show a tooltip "Select items to remove"?
+            print("No items selected")
+        }
+    }
+    
+    func deleteSelectedItems() {
+        let fileManager = FileManager.default
+        var deletedIDs: Set<UUID> = []
+        
+        for item in itemsToRemove {
+            do {
+                try fileManager.removeItem(at: item.url)
+                deletedIDs.insert(item.id)
+                print("Deleted: \(item.url.path)")
+            } catch {
+                print("Failed to delete \(item.url.path): \(error)")
+                // Handle error (maybe show alert?)
+            }
+        }
+        
+        // Update UI
+        // Remove deleted nodes from current children
+        if let current = currentNode {
+            current.children.removeAll { deletedIDs.contains($0.id) }
+            
+            // Recalculate size of current node?
+            // A full recalculation would be recursive, but simple subtraction might be enough for immediate feedback.
+            let deletedSize = itemsToRemove.filter { deletedIDs.contains($0.id) }.reduce(0) { $0 + $1.size }
+            current.size -= deletedSize
+            if current.size < 0 { current.size = 0 } // Safety
+            
+            // Re-layout bubbles
+            calculateLayout(for: current)
+            
+            // Update total scanned size mock?
+            scanner.totalSize -= deletedSize
+        }
+        
+        // Dismiss
+        showRemoveConfirmation = false
+        itemsToRemove = []
+    }
 }
 
 // MARK: - File List Row
@@ -581,13 +703,18 @@ struct FileListRow: View {
     var body: some View {
         HStack(spacing: 12) {
             ZStack {
-                Circle()
-                    .stroke(Color.white.opacity(0.3), lineWidth: 1)
-                    .frame(width: 16, height: 16)
                 if node.isSelected {
-                     Circle().fill(Color.blue).frame(width: 10, height: 10)
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundColor(Color.blue)
+                        .font(.system(size: 16))
+                        .background(Circle().fill(Color.white).frame(width: 8, height: 8)) // White background for the checkmark
+                } else {
+                     Circle()
+                        .stroke(Color.white.opacity(0.3), lineWidth: 1)
+                        .frame(width: 16, height: 16)
                 }
             }
+            .frame(width: 20, height: 20) // Consistent hit area
             .contentShape(Rectangle()) // Hit area
             .onTapGesture {
                 node.isSelected.toggle()
