@@ -3,7 +3,7 @@ import Combine
 
 // MARK: - Models
 
-struct DeepCleanItem: Identifiable, Sendable {
+struct DeepCleanItem: Identifiable, @unchecked Sendable {
     let id = UUID()
     let url: URL
     let name: String
