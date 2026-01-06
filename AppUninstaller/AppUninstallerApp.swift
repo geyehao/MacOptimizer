@@ -2,8 +2,9 @@ import SwiftUI
 
 @main
 struct AppUninstallerApp: App {
-    // Hold a strong reference to the manager
-    @StateObject var menuBarManager = MenuBarManager()
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    // Hold a strong reference to the manager (Keep it, but access via shared in AppDelegate if needed)
+    @StateObject var menuBarManager = MenuBarManager.shared
     
     var body: some Scene {
         WindowGroup {
@@ -11,6 +12,9 @@ struct AppUninstallerApp: App {
                 .frame(minWidth: 1100, minHeight: 750)
                 .preferredColorScheme(.dark)
                 .task {
+                    // Start Protection Service
+                    ProtectionService.shared.startMonitoring()
+                    // Check for Updates
                     await UpdateCheckerService.shared.checkForUpdates()
                 }
         }

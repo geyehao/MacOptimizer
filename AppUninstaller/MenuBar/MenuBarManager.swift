@@ -11,6 +11,8 @@ public enum MenuBarRoute {
 }
 
 class MenuBarManager: NSObject, ObservableObject {
+    static let shared = MenuBarManager()
+    
     var statusItem: NSStatusItem?
     var popoverWindow: MenuBarWindow?
     var detailWindow: MenuBarWindow?

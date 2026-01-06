@@ -111,9 +111,42 @@ struct MenuBarView: View {
                         manager.openMainApp()
                     }
                 Spacer()
-                Image(systemName: "gearshape.fill")
-                    .font(.system(size: 14))
-                    .foregroundColor(.secondary)
+                Menu {
+                    Button(action: {
+                        manager.openMainApp()
+                    }) {
+                        Text("关于 Mac优化大师")
+                    }
+                    Button(action: {
+                        // Feedback action placeholder
+                    }) {
+                        Text("提供反馈...")
+                    }
+                    Divider()
+                    Button(action: {
+                        // Open Settings (Placeholder, or implementation if SettingsView exists)
+                        // If SettingsView is part of main app, open main app then settings.
+                        // Ideally, we open the Settings window directly using Preferences Window Controller.
+                        // For now, let's open main app.
+                        manager.openMainApp()
+                    }) {
+                        Text("偏好设置...")
+                    }
+                    Divider()
+                    Button(action: {
+                        // Set flag to allow quit
+                        UserDefaults.standard.set(true, forKey: "ForceQuitApp")
+                        NSApplication.shared.terminate(nil)
+                    }) {
+                        Text("退出 (Quit)")
+                    }
+                } label: {
+                    Image(systemName: "gearshape.fill")
+                        .font(.system(size: 14))
+                        .foregroundColor(.secondary)
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
             }
             .padding()
             .background(Color(nsColor: .windowBackgroundColor))

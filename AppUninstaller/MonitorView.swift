@@ -11,35 +11,46 @@ struct MonitorView: View {
         case appManager
         case portManager
         case processManager
-        case junkClean  // 垃圾清理
+
         case networkOptimize  // 新增：网络优化
+        case protection // 新增：安全防护
     }
     
     var body: some View {
-        ZStack {
-            // 背景渐变在 ContentView 中处理，这里只处理内容切换
-            switch viewState {
-            case .dashboard:
-                ConsoleDashboardView(viewState: $viewState)
-                    .transition(.opacity.combined(with: .move(edge: .leading)))
-            case .appManager:
-                ConsoleAppManagerView(viewState: $viewState)
-                    .transition(.move(edge: .trailing))
-            case .portManager:
-                ConsolePortManagerView(viewState: $viewState)
-                    .transition(.move(edge: .trailing))
-            case .processManager:
-                ConsoleProcessManagerView(viewState: $viewState)
-                    .transition(.move(edge: .trailing))
-            case .junkClean:
-                ConsoleJunkCleanView(viewState: $viewState)
-                    .transition(.move(edge: .trailing))
-            case .networkOptimize:
-                ConsoleNetworkOptimizeView(viewState: $viewState)
-                    .transition(.move(edge: .trailing))
+        HStack(spacing: 0) {
+            // Left Sidebar
+            ConsoleSidebar(selection: $viewState)
+            
+            Divider()
+                .background(Color.white.opacity(0.1))
+            
+            // Right Content
+            ZStack {
+                switch viewState {
+                case .dashboard:
+                    ConsoleOverviewView(viewState: $viewState, systemMonitor: SystemMonitorService())
+                        .transition(.opacity)
+                case .protection:
+                    ConsoleProtectionView(viewState: $viewState)
+                        .transition(.opacity)
+                case .appManager:
+                    ConsoleAppManagerView(viewState: $viewState)
+                        .transition(.opacity)
+                case .portManager:
+                    ConsolePortManagerView(viewState: $viewState)
+                        .transition(.opacity)
+                case .processManager:
+                    ConsoleProcessManagerView(viewState: $viewState)
+                        .transition(.opacity)
+                case .networkOptimize:
+                    ConsoleNetworkOptimizeView(viewState: $viewState)
+                        .transition(.opacity)
+                }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color.clear) // Gradient is in main window
         }
-        .animation(.easeInOut(duration: 0.3), value: viewState)
+        .animation(.easeInOut(duration: 0.2), value: viewState)
     }
 }
 
@@ -68,33 +79,8 @@ struct ConsoleDashboardView: View {
             
             ScrollView {
                 VStack(spacing: 24) {
-                    // Top Stats: Junk Size, System Stats, Network
+                    // Top Stats: System Stats, Network (Reorganized)
                     HStack(spacing: 16) {
-                        // Junk Size Card - 可点击进入清理详情
-                        Button(action: {
-                            viewState = .junkClean
-                        }) {
-                            MonitorCard(title: loc.currentLanguage == .chinese ? "待清理垃圾" : "Junk to Clean", icon: "trash.fill", color: .pink) {
-                                VStack(alignment: .leading, spacing: 8) {
-                                    Spacer()
-                                    Text(ByteCountFormatter.string(fromByteCount: scanManager.totalCleanableSize, countStyle: .file))
-                                        .font(.system(size: 28, weight: .bold, design: .rounded))
-                                        .foregroundColor(.white)
-                                    HStack {
-                                        Text(loc.currentLanguage == .chinese ? "可释放空间" : "Reclaimable Space")
-                                            .font(.caption2)
-                                            .foregroundColor(.white.opacity(0.6))
-                                        Spacer()
-                                        Image(systemName: "chevron.right")
-                                            .font(.caption2)
-                                            .foregroundColor(.white.opacity(0.4))
-                                    }
-                                    Spacer()
-                                }
-                            }
-                        }
-                        .buttonStyle(.plain)
-                        
                         // CPU & Memory Circle
                         MonitorCard(title: loc.currentLanguage == .chinese ? "系统负载" : "System Load", icon: "cpu", color: .blue) {
                             HStack(spacing: 20) {
@@ -182,6 +168,16 @@ struct ConsoleDashboardView: View {
                             color: .green
                         ) {
                             viewState = .processManager
+                        }
+                        
+                        // Protection Center
+                        DashboardButton(
+                            title: loc.currentLanguage == .chinese ? "安全中心" : "Safety Center",
+                            description: ProtectionService.shared.isMonitoring ? (loc.currentLanguage == .chinese ? "实时保护已开启" : "Real-time protection on") : (loc.currentLanguage == .chinese ? "实时保护未开启" : "Protection disabled"),
+                            icon: "shield.checkerboard",
+                            color: ProtectionService.shared.isMonitoring ? .green : .orange
+                        ) {
+                            viewState = .protection
                         }
                     }
                 }
@@ -1586,5 +1582,241 @@ struct OptimizationItem: View {
                 .font(.caption)
                 .foregroundColor(.white.opacity(0.8))
         }
+    }
+}
+
+// MARK: - Protection View
+struct ConsoleProtectionView: View {
+    @Binding var viewState: MonitorView.DashboardState
+    @ObservedObject var protectionService = ProtectionService.shared
+    @ObservedObject var loc = LocalizationManager.shared
+    @State private var selectedTab = 0 // 0: Ads, 1: Threats
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            ConsoleHeader(
+                title: loc.currentLanguage == .chinese ? "安全中心" : "Safety Center",
+                backAction: { viewState = .dashboard }
+            )
+            
+            ScrollView {
+                VStack(spacing: 24) {
+                    // Status Card
+                    HStack {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(protectionService.isMonitoring ? (loc.currentLanguage == .chinese ? "实时保护已开启" : "Real-time Protection: ON") : (loc.currentLanguage == .chinese ? "实时保护已关闭" : "Real-time Protection: OFF"))
+                                .font(.title3)
+                                .bold()
+                                .foregroundColor(protectionService.isMonitoring ? .green : .white)
+                            
+                            Text(loc.currentLanguage == .chinese ? "正在监控下载文件夹和拦截网页广告" : "Monitoring downloads and blocking ads")
+                                .font(.caption)
+                                .foregroundColor(.white.opacity(0.6))
+                        }
+                        
+                        Spacer()
+                        
+                        Toggle("", isOn: Binding(
+                            get: { protectionService.isMonitoring },
+                            set: { newValue in
+                                if newValue {
+                                    protectionService.startMonitoring() 
+                                } else {
+                                    protectionService.stopMonitoring()
+                                }
+                            }
+                        ))
+                        .toggleStyle(SwitchToggleStyle(tint: .green))
+                    }
+                    .padding(24)
+                    .background(Color.white.opacity(0.05))
+                    .cornerRadius(16)
+                    
+                    // Statistics Grid
+                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 20) {
+                        // Downloads Monitored
+                        StatCard(
+                            title: loc.currentLanguage == .chinese ? "下载监控" : "Downloads",
+                            value: "Active",
+                            icon: "arrow.down.circle.fill",
+                            color: .blue
+                        )
+                        
+                        // Ads Blocked
+                        StatCard(
+                            title: loc.currentLanguage == .chinese ? "拦截广告" : "Ads Blocked",
+                            value: "\(protectionService.adBlockedCount)",
+                            icon: "hand.raised.fill",
+                            color: .orange
+                        )
+                        
+                        // Threats
+                        StatCard(
+                            title: loc.currentLanguage == .chinese ? "拦截威胁" : "Threats",
+                            value: "\(protectionService.threatHistory.count)",
+                            icon: "exclamationmark.shield.fill",
+                            color: .red
+                        )
+                    }
+                    
+                    // Details Section
+                    VStack(spacing: 16) {
+                        // Tab Picker
+                        Picker("", selection: $selectedTab) {
+                            Text(loc.currentLanguage == .chinese ? "广告拦截记录" : "Blocked Ads").tag(0)
+                            Text(loc.currentLanguage == .chinese ? "威胁记录" : "Detected Threats").tag(1)
+                        }
+                        .pickerStyle(.segmented)
+                        .padding(.horizontal)
+                        
+                        if selectedTab == 0 {
+                            // Ads List
+                            if protectionService.blockedAds.isEmpty {
+                                EmptyStateView(
+                                    icon: "hand.raised",
+                                    title: loc.currentLanguage == .chinese ? "暂无拦截记录" : "No Ads Blocked",
+                                    subtitle: loc.currentLanguage == .chinese ? "浏览网页时将自动拦截广告" : "Ads will be blocked while browsing"
+                                )
+                            } else {
+                                LazyVStack(spacing: 8) {
+                                    ForEach(protectionService.blockedAds) { ad in
+                                        HStack {
+                                            Image(systemName: "safari.fill") // Generic browser icon or based on source
+                                                .foregroundColor(.orange)
+                                                .frame(width: 20)
+                                            
+                                            VStack(alignment: .leading, spacing: 2) {
+                                                Text(ad.domain)
+                                                    .font(.system(size: 13, weight: .medium))
+                                                    .foregroundColor(.white)
+                                                Text("\(ad.source) • \(formatDate(ad.date))")
+                                                    .font(.caption2)
+                                                    .foregroundColor(.white.opacity(0.5))
+                                            }
+                                            
+                                            Spacer()
+                                            
+                                            Text(loc.currentLanguage == .chinese ? "已拦截" : "Blocked")
+                                                .font(.caption2)
+                                                .foregroundColor(.green)
+                                                .padding(.horizontal, 6)
+                                                .padding(.vertical, 2)
+                                                .background(Color.green.opacity(0.1))
+                                                .cornerRadius(4)
+                                        }
+                                        .padding(12)
+                                        .background(Color.white.opacity(0.04))
+                                        .cornerRadius(8)
+                                    }
+                                }
+                                .padding(.horizontal)
+                            }
+                        } else {
+                            // Threat List
+                            if protectionService.threatHistory.isEmpty {
+                                EmptyStateView(
+                                    icon: "checkmark.shield",
+                                    title: loc.currentLanguage == .chinese ? "未发现威胁" : "No Threats Detected",
+                                    subtitle: loc.currentLanguage == .chinese ? "您的系统目前是安全的" : "Your system is currently safe"
+                                )
+                            } else {
+                                ForEach(protectionService.threatHistory) { threat in
+                                    HStack {
+                                        Image(systemName: "exclamationmark.triangle.fill")
+                                            .foregroundColor(.red)
+                                        VStack(alignment: .leading) {
+                                            Text(threat.name)
+                                                .foregroundColor(.white)
+                                            Text(threat.path.path)
+                                                .font(.caption)
+                                                .foregroundColor(.white.opacity(0.5))
+                                                .lineLimit(1)
+                                                .truncationMode(.middle)
+                                        }
+                                        Spacer()
+                                        Text(threat.type.rawValue)
+                                            .font(.caption)
+                                            .padding(4)
+                                            .background(Color.red.opacity(0.2))
+                                            .cornerRadius(4)
+                                    }
+                                    .padding()
+                                    .background(Color.white.opacity(0.05))
+                                    .cornerRadius(8)
+                                    .padding(.horizontal)
+                                }
+                            }
+                        }
+                    }
+                    .padding(.bottom, 32)
+                }
+                .padding(.horizontal, 32)
+            }
+        }
+    }
+    
+    private func formatDate(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.timeStyle = .medium
+        formatter.dateStyle = .none
+        return formatter.string(from: date)
+    }
+}
+
+struct EmptyStateView: View {
+    let icon: String
+    let title: String
+    let subtitle: String
+    
+    var body: some View {
+        HStack {
+            Spacer()
+            VStack(spacing: 12) {
+                Image(systemName: icon)
+                    .font(.system(size: 48))
+                    .foregroundColor(.white.opacity(0.2))
+                Text(title)
+                    .font(.headline)
+                    .foregroundColor(.white.opacity(0.8))
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundColor(.secondaryText)
+            }
+            Spacer()
+        }
+        .padding(40)
+        .background(Color.white.opacity(0.02))
+        .cornerRadius(12)
+        .padding(.horizontal)
+    }
+}
+
+struct StatCard: View {
+    let title: String
+    let value: String
+    let icon: String
+    let color: Color
+    
+    var body: some View {
+        VStack(spacing: 12) {
+            HStack {
+                Image(systemName: icon)
+                    .foregroundColor(color)
+                Spacer()
+            }
+            
+            Text(value)
+                .font(.system(size: 28, weight: .bold, design: .rounded))
+                .foregroundColor(.white)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            
+            Text(title)
+                .font(.caption)
+                .foregroundColor(.white.opacity(0.6))
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(20)
+        .background(Color.white.opacity(0.05))
+        .cornerRadius(16)
     }
 }

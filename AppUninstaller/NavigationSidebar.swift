@@ -23,7 +23,7 @@ enum SidebarSection: String, CaseIterable {
     var modules: [AppModule] {
         switch self {
         case .main:
-            return [.smartClean]
+            return [.monitor, .smartClean]
         case .cleanup:
             return [.cleaner, .deepClean, .trash]
         case .protection:

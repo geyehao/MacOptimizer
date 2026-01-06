@@ -70,24 +70,14 @@ class SystemMonitorService: ObservableObject {
     // ... updateStats logic ...
     
     private func fetchUserProcesses() {
-        // 1. Get User Apps from NSWorkspace
+        // 1. Get User Apps from NSWorkspace (GUI Apps)
         let runningApps = NSWorkspace.shared.runningApplications.filter { $0.activationPolicy == .regular }
-        let pids = runningApps.map { $0.processIdentifier }
         
-        guard !pids.isEmpty else { return }
-        
-        // 2. Build map of PID -> App Info
-        var appMap: [pid_t: (String, NSImage?)] = [:]
-        for app in runningApps {
-            appMap[app.processIdentifier] = (app.localizedName ?? "Unknown", app.icon)
-        }
-        
-        // 3. Run ps command to get stats for these pids
-        // ps -p pid1,pid2 -o pid,%cpu,rss
-        let pidString = pids.map { String($0) }.joined(separator: ",")
+        // 2. Scan ALL user processes to build a process tree
+        // ps -x -o pid,ppid,%cpu,rss,comm
         let task = Process()
         task.launchPath = "/bin/bash"
-        task.arguments = ["-c", "ps -p \(pidString) -o pid,%cpu,rss | tail -n +2"] // Tail skip header
+        task.arguments = ["-c", "ps -x -o pid,ppid,%cpu,rss,comm | tail -n +2"]
         
         let pipe = Pipe()
         task.standardOutput = pipe
@@ -96,31 +86,91 @@ class SystemMonitorService: ObservableObject {
             try task.run()
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
             if let output = String(data: data, encoding: .utf8) {
-                var processes: [AppProcess] = []
+                // Parse all processes
+                struct ProcessInfo {
+                    let pid: Int32
+                    let ppid: Int32
+                    let cpu: Double
+                    let rss: Double // GB
+                    let name: String
+                }
+                
+                var allProcesses: [Int32: ProcessInfo] = [:]
+                var childrenMap: [Int32: [Int32]] = [:] // Parent -> [Children]
                 
                 let lines = output.components(separatedBy: "\n")
                 for line in lines {
                     let parts = line.trimmingCharacters(in: .whitespaces).components(separatedBy: .whitespaces).filter { !$0.isEmpty }
-                    if parts.count >= 3,
-                       let pid = pid_t(parts[0]),
-                       let cpu = Double(parts[1]),
-                       let rssKB = Double(parts[2]) {
+                    if parts.count >= 5,
+                       let pid = Int32(parts[0]),
+                       let ppid = Int32(parts[1]),
+                       let cpu = Double(parts[2]),
+                       let rssKB = Double(parts[3]) {
                         
-                        if let info = appMap[pid] {
-                            processes.append(AppProcess(
-                                id: pid,
-                                name: info.0,
-                                icon: info.1,
-                                cpu: cpu,
-                                memory: rssKB / 1024.0 / 1024.0 // KB -> GB
-                            ))
-                        }
+                        // Extract name (rest of the line)
+                        let nameParts = parts.dropFirst(4)
+                        let fullPath = nameParts.joined(separator: " ")
+                        let name = URL(fileURLWithPath: fullPath).lastPathComponent
+                        
+                        let info = ProcessInfo(pid: pid, ppid: ppid, cpu: cpu, rss: rssKB / 1024.0 / 1024.0, name: name)
+                        allProcesses[pid] = info
+                        
+                        // Build tree
+                        childrenMap[ppid, default: []].append(pid)
                     }
                 }
                 
+                // Helper to calculate total stats recursively
+                func getAggregatedStats(for pid: Int32, visited: inout Set<Int32>) -> (cpu: Double, mem: Double) {
+                    if visited.contains(pid) { return (0, 0) }
+                    visited.insert(pid)
+                    
+                    var totalCPU = 0.0
+                    var totalMem = 0.0
+                    
+                    if let process = allProcesses[pid] {
+                        totalCPU += process.cpu
+                        totalMem += process.rss
+                    }
+                    
+                    if let children = childrenMap[pid] {
+                        for child in children {
+                            let childStats = getAggregatedStats(for: child, visited: &visited)
+                            totalCPU += childStats.cpu
+                            totalMem += childStats.mem
+                        }
+                    }
+                    
+                    return (totalCPU, totalMem)
+                }
+                
+                // 3. Aggregate stats for each App
+                var appProcesses: [AppProcess] = []
+
+                
+                for app in runningApps {
+                    let pid = app.processIdentifier
+                    // Only process if valid and not already counted (though unlikely for main apps to duplicate)
+                    
+                    var visited = Set<Int32>() // Visited for this app's tree
+                    let stats = getAggregatedStats(for: pid, visited: &visited)
+                    
+                    // Add app stats
+                    appProcesses.append(AppProcess(
+                        id: pid,
+                        name: app.localizedName ?? "Unknown",
+                        icon: app.icon,
+                        cpu: stats.cpu,
+                        memory: stats.mem
+                    ))
+                    
+                    // Mark these PIDs as processed if we want to avoid double counting if we were scanning all processes.
+                    // But here we only care about the Apps list from NSWorkspace.
+                }
+                
                 // Sort and Update
-                let sortedByMem = processes.sorted { $0.memory > $1.memory }.prefix(5)
-                let sortedByCPU = processes.sorted { $0.cpu > $1.cpu }.prefix(5)
+                let sortedByMem = appProcesses.sorted { $0.memory > $1.memory }.prefix(10)
+                let sortedByCPU = appProcesses.sorted { $0.cpu > $1.cpu }.prefix(10)
                 
                 DispatchQueue.main.async {
                     self.topMemoryProcesses = Array(sortedByMem)
