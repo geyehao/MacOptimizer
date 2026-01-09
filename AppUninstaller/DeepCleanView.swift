@@ -715,6 +715,9 @@ struct DeepCleanItemRow: View {
     let item: DeepCleanItem
     @ObservedObject var scanner: DeepCleanScanner
     
+    @State private var isHovering: Bool = false
+    @State private var showDeleteConfirmation: Bool = false
+    
     var body: some View {
         HStack {
             Toggle("", isOn: Binding(
@@ -752,10 +755,132 @@ struct DeepCleanItemRow: View {
             Text(item.formattedSize)
                 .foregroundColor(.secondaryText)
                 .monospacedDigit()
+            
+            // 操作按钮（悬停时显示）
+            if isHovering {
+                HStack(spacing: 6) {
+                    // 在访达中打开
+                    Button(action: openInFinder) {
+                        Image(systemName: "folder.badge.gearshape")
+                            .font(.system(size: 14))
+                            .foregroundColor(.blue)
+                    }
+                    .buttonStyle(.plain)
+                    .help(LocalizationManager.shared.currentLanguage == .chinese ? "在访达中打开" : "Open in Finder")
+                    
+                    // 删除按钮
+                    Button(action: { showDeleteConfirmation = true }) {
+                        Image(systemName: "trash")
+                            .font(.system(size: 14))
+                            .foregroundColor(.red)
+                    }
+                    .buttonStyle(.plain)
+                    .help(LocalizationManager.shared.currentLanguage == .chinese ? "删除" : "Delete")
+                }
+                .padding(.horizontal, 4)
+            }
         }
         .padding(.vertical, 4)
         .padding(.horizontal, 8)
         .background(Color.white.opacity(0.05))
         .cornerRadius(8)
+        .onHover { isHovering = $0 }
+        .confirmationDialog(
+            LocalizationManager.shared.currentLanguage == .chinese ? "确认删除" : "Confirm Delete",
+            isPresented: $showDeleteConfirmation
+        ) {
+            Button(
+                LocalizationManager.shared.currentLanguage == .chinese ? "删除" : "Delete",
+                role: .destructive
+            ) {
+                deleteSingleItem()
+            }
+            Button(
+                LocalizationManager.shared.currentLanguage == .chinese ? "取消" : "Cancel",
+                role: .cancel
+            ) {}
+        } message: {
+            let itemName = item.name
+            Text(LocalizationManager.shared.currentLanguage == .chinese ?
+                 "确定要删除\"\(itemName)\"吗？此操作无法撤销。" :
+                 "Are you sure you want to delete \"\(itemName)\"? This action cannot be undone.")
+        }
+        .contextMenu {
+            // 仅在选中时显示"取消选择"
+            if item.isSelected {
+                Button {
+                    scanner.toggleSelection(for: item)
+                } label: {
+                    let itemName = item.name
+                    Label(
+                        LocalizationManager.shared.currentLanguage == .chinese ? 
+                            "取消选择\"\(itemName)\"" : 
+                            "Deselect \"\(itemName)\"",
+                        systemImage: "checkmark.circle"
+                    )
+                }
+                
+                Divider()
+            }
+            
+            // 在访达中显示
+            Button {
+                openInFinder()
+            } label: {
+                Label(
+                    LocalizationManager.shared.currentLanguage == .chinese ? 
+                        "在\"访达\"中显示" : 
+                        "Show in Finder",
+                    systemImage: "folder"
+                )
+            }
+            
+            // 快速查看
+            Button {
+                quickLookFile()
+            } label: {
+                let itemName = item.name
+                Label(
+                    LocalizationManager.shared.currentLanguage == .chinese ? 
+                        "快速查看\"\(itemName)\"" : 
+                        "Quick Look \"\(itemName)\"",
+                    systemImage: "eye"
+                )
+            }
+            
+            Divider()
+            
+            // 忽略
+            Button {
+                // TODO: 实现忽略功能
+                print("忽略: \(item.name)")
+            } label: {
+                Label(
+                    LocalizationManager.shared.currentLanguage == .chinese ? 
+                        "忽略" : 
+                        "Ignore",
+                    systemImage: "eye.slash"
+                )
+            }
+        }
+    }
+    
+    // MARK: - Helper Methods
+    private func openInFinder() {
+        NSWorkspace.shared.selectFile(item.url.path, inFileViewerRootedAtPath: "")
+    }
+    
+    private func deleteSingleItem() {
+        Task {
+            let success = await scanner.deleteSingleItem(item)
+            if !success {
+                print("删除失败: \(item.url.path)")
+            }
+        }
+    }
+    
+    private func quickLookFile() {
+        // 使用NSWorkspace打开Quick Look
+        NSWorkspace.shared.open([item.url], withApplicationAt: URL(fileURLWithPath: "/System/Library/CoreServices/Finder.app"), configuration: NSWorkspace.OpenConfiguration())
     }
 }

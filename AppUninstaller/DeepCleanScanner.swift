@@ -708,5 +708,19 @@ class DeepCleanScanner: ObservableObject {
             items[i].isSelected = false
         }
     }
+    
+    /// 删除单个项目
+    @MainActor
+    func deleteSingleItem(_ item: DeepCleanItem) async -> Bool {
+        do {
+            try fileManager.removeItem(at: item.url)
+            items.removeAll { $0.id == item.id }
+            totalSize -= item.size
+            return true
+        } catch {
+            print("删除失败: \(item.url.path) - \(error)")
+            return false
+        }
+    }
 }
 

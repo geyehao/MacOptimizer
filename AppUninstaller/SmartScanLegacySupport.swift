@@ -144,7 +144,7 @@ struct AllCategoriesDetailSheet: View {
     @Binding var isPresented: Bool
     var initialCategory: CleanerCategory?
     
-    @State private var selectedMainCategory: CleanerCategory? = nil
+    @State private var selectedMainCategory: MainCategory? = nil
     @State private var selectedSubcategory: CleanerCategory? = nil
     
     var body: some View {
@@ -152,6 +152,8 @@ struct AllCategoriesDetailSheet: View {
             // 顶部栏
             HStack {
                 Button(action: {
+                    // 关闭前手动触发更新，确保主界面显示最新的选中文件大小
+                    service.objectWillChange.send()
                     isPresented = false
                 }) {
                     HStack(spacing: 4) {
@@ -164,11 +166,10 @@ struct AllCategoriesDetailSheet: View {
                 }
                 .buttonStyle(.plain)
                 
-                
                 Spacer()
                 
                 Text(loc.currentLanguage == .chinese ? "清理详情" : "Cleanup Details")
-                    .font(.system(size: 14, weight: .semibold)) // Reduced from 16
+                    .font(.system(size: 16, weight: .semibold))
                     .foregroundColor(.white)
                 
                 Spacer()
@@ -179,279 +180,178 @@ struct AllCategoriesDetailSheet: View {
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 16)
-            // .background(.ultraThinMaterial) // Removed glass header for cleaner look
             
-            // 直接使用左右布局
-            allCategoriesOverview
+            // 三栏布局
+            threeColumnLayout
         }
-        .frame(width: 960, height: 640) // Increased size (was 880x600)
-        .background(BackgroundStyles.smartScanSheet) // Use the new professional gradient
+        .frame(width: 1024, height: 680)
+        .background(BackgroundStyles.smartScanSheet)
         .onAppear {
+            // 智能默认选择
+            if selectedMainCategory == nil {
+                selectedMainCategory = .systemJunk
+                if let firstSubcat = MainCategory.systemJunk.subcategories.first {
+                    selectedSubcategory = firstSubcat
+                }
+            }
+            
+            // 处理初始分类
             if let initial = initialCategory {
                 if initial == .systemJunk {
                     selectedMainCategory = .systemJunk
-                } else if [.userCache, .systemCache, .oldUpdates, .languageFiles, .systemLogs, .userLogs, .brokenLoginItems].contains(initial) {
+                } else if MainCategory.systemJunk.subcategories.contains(initial) {
                     selectedMainCategory = .systemJunk
                     selectedSubcategory = initial
                 } else {
-                    selectedMainCategory = initial
+                    // 查找属于哪个主分类
+                    for mainCat in MainCategory.allCases {
+                        if mainCat.subcategories.contains(initial) {
+                            selectedMainCategory = mainCat
+                            selectedSubcategory = initial
+                            break
+                        }
+                    }
                 }
             }
         }
     }
     
-    // 所有主分类概览 - 左右布局
-    private var allCategoriesOverview: some View {
+    // MARK: - 三栏布局主视图
+    private var threeColumnLayout: some View {
         HStack(spacing: 0) {
-            // 左侧分类列表
-            VStack(alignment: .leading, spacing: 0) {
-                HStack {
-                    Text(loc.currentLanguage == .chinese ? "扫描结果" : "Scan Results")
-                        .font(.system(size: 12, weight: .medium)) // Reduced from 13
-                        .foregroundColor(.white.opacity(0.6))
-                    Spacer()
+            // 左栏：主分类列表
+            MainCategoryListView(
+                service: service,
+                loc: loc,
+                selectedMainCategory: $selectedMainCategory
+            )
+            .onChange(of: selectedMainCategory) { newValue in
+                // 当选择新的主分类时，自动选择第一个子分类
+                if let mainCat = newValue {
+                    selectedSubcategory = mainCat.subcategories.first
                 }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 12)
+            }
+            
+            Divider()
+                .frame(width: 1)
+                .background(Color.white.opacity(0.1))
+            
+            // 中栏：子分类列表
+            if let mainCat = selectedMainCategory {
+                SubCategoryListView(
+                    mainCategory: mainCat,
+                    service: service,
+                    loc: loc,
+                    selectedSubcategory: $selectedSubcategory
+                )
                 
-                ScrollView {
-                    VStack(spacing: 8) {
-                        // 系统垃圾
-                        MainCategoryRow(
-                            icon: "trash.fill",
-                            title: loc.currentLanguage == .chinese ? "系统垃圾" : "System Junk",
-                            size: service.systemJunkTotalSize,
-                            count: service.countFor(category: .systemJunk),
-                            color: .pink,
-                            isSelected: selectedMainCategory == .systemJunk,
-                            onTap: { selectedMainCategory = .systemJunk; selectedSubcategory = nil }
-                        )
-                        
-                        // 重复文件
-                        MainCategoryRow(
-                            icon: "doc.on.doc",
-                            title: loc.currentLanguage == .chinese ? "重复文件" : "Duplicates",
-                            size: service.sizeFor(category: .duplicates),
-                            count: service.duplicateGroups.flatMap { $0.files }.count,
-                            color: .blue,
-                            isSelected: selectedMainCategory == .duplicates,
-                            onTap: { selectedMainCategory = .duplicates; selectedSubcategory = nil }
-                        )
-                        
-                        // 相似照片
-                        MainCategoryRow(
-                            icon: "photo.on.rectangle",
-                            title: loc.currentLanguage == .chinese ? "相似照片" : "Similar Photos",
-                            size: service.sizeFor(category: .similarPhotos),
-                            count: service.similarPhotoGroups.flatMap { $0.files }.count,
-                            color: .purple,
-                            isSelected: selectedMainCategory == .similarPhotos,
-                            onTap: { selectedMainCategory = .similarPhotos; selectedSubcategory = nil }
-                        )
-                        
-                        // 大文件
-                        MainCategoryRow(
-                            icon: "externaldrive.fill",
-                            title: loc.currentLanguage == .chinese ? "大文件" : "Large Files",
-                            size: service.sizeFor(category: .largeFiles),
-                            count: service.largeFiles.count,
-                            color: .orange,
-                            isSelected: selectedMainCategory == .largeFiles,
-                            onTap: { selectedMainCategory = .largeFiles; selectedSubcategory = nil }
-                        )
-                        
-                        Divider()
-                            .background(Color.white.opacity(0.1))
-                            .padding(.vertical, 8)
-                        
-                        // 病毒威胁
-                        MainCategoryRow(
-                            icon: "ant.fill",
-                            title: loc.currentLanguage == .chinese ? "病毒威胁" : "Virus Threats",
-                            size: 0,
-                            count: service.virusThreats.count,
-                            color: .red,
-                            isSelected: selectedMainCategory == .virus,
-                            onTap: { selectedMainCategory = .virus; selectedSubcategory = nil }
-                        )
-                        
-                        // 启动项
-                        MainCategoryRow(
-                            icon: "power",
-                            title: loc.currentLanguage == .chinese ? "启动项" : "Startup Items",
-                            size: 0,
-                            count: service.startupItems.count,
-                            color: .orange,
-                            isSelected: selectedMainCategory == .startupItems,
-                            onTap: { selectedMainCategory = .startupItems; selectedSubcategory = nil }
-                        )
-                        
-                        // 性能优化
-                        MainCategoryRow(
-                            icon: "gauge",
-                            title: loc.currentLanguage == .chinese ? "性能优化" : "Performance",
-                            size: 0,
-                            count: service.performanceApps.count,
-                            color: .green,
-                            isSelected: selectedMainCategory == .performanceApps,
-                            onTap: { selectedMainCategory = .performanceApps; selectedSubcategory = nil }
-                        )
-                        
-                        // 应用更新
-                        MainCategoryRow(
-                            icon: "arrow.triangle.2.circlepath.circle.fill",
-                            title: loc.currentLanguage == .chinese ? "应用更新" : "App Updates",
-                            size: 0,
-                            count: service.hasAppUpdates ? 1 : 0,
-                            color: .blue,
-                            isSelected: selectedMainCategory == .appUpdates,
-                            onTap: { selectedMainCategory = .appUpdates; selectedSubcategory = nil }
-                        )
-                    }
-                    .padding()
+                Divider()
+                    .frame(width: 1)
+                    .background(Color.white.opacity(0.1))
+                
+                // 右栏：文件详情列表
+                if let subcat = selectedSubcategory {
+                    fileDetailPane(for: subcat)
+                } else {
+                    emptyStateView
                 }
-                
-
-                
+            } else {
+                emptyStateView
+            }
+        }
+    }
+    
+    // 空状态视图
+    private var emptyStateView: some View {
+        VStack {
+            Spacer()
+            Image(systemName: "arrow.left")
+                .font(.system(size: 48))
+                .foregroundColor(.secondaryText.opacity(0.5))
+            Text(loc.currentLanguage == .chinese ? "选择分类查看详情" : "Select a category")
+                .font(.title3)
+                .foregroundColor(.secondaryText)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity)
+    }
+    
+    //文件详情面板
+    private func fileDetailPane(for category: CleanerCategory) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // 标题区域
+            HStack {
+                Text(loc.currentLanguage == .chinese ? category.rawValue : category.englishName)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(.white)
                 
                 Spacer()
-            }
-            .frame(width: 300) // Increased width (was 260)
-            .background(Color.black.opacity(0.1)) // Subtle separation
-            
-            // 右侧详情区域 - 根据选择的分类显示内容
-            if let mainCategory = selectedMainCategory {
-                switch mainCategory {
-                case .systemJunk:
-                    systemJunkRightPane
-                case .virus:
-                    virusRightPane
-                case .startupItems:
-                    startupItemsRightPane
-                case .performanceApps:
-                    performanceAppsRightPane
-                case .appUpdates:
-                    appUpdatesRightPane
-                default:
-                    // 其他分类 - 直接显示文件列表
-                    rightPaneFileList(for: mainCategory)
-                }
-            } else {
-                // 未选择时显示提示
-                VStack {
-                    Spacer()
-                    Image(systemName: "arrow.left")
-                        .font(.system(size: 48))
-                        .foregroundColor(.secondaryText.opacity(0.5))
-                    Text(loc.currentLanguage == .chinese ? "选择左侧分类查看详情" : "Select a category to view details")
-                        .font(.title3)
-                        .foregroundColor(.secondaryText)
-                    Spacer()
-                }
-                .frame(maxWidth: .infinity)
-            }
-        }
-    }
-    
-    // 系统垃圾右侧面板 - 显示子分类或具体文件
-    private var systemJunkRightPane: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            // 标题
-            VStack(alignment: .leading, spacing: 4) {
-                Text(loc.currentLanguage == .chinese ? "系统垃圾" : "System Junk")
-                    .font(.system(size: 18, weight: .bold)) // Reduced from 20
-                    .foregroundColor(.white)
-                Text(loc.currentLanguage == .chinese ? "清理您的系统来获得最大的性能和释放自由空间。" : "Clean your system for best performance and free space.")
-                    .font(.system(size: 12)) // Reduced from 13
-                    .foregroundColor(.white.opacity(0.7))
-            }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 16) // Reduced padding
-            .padding(.bottom, 4)
-            
-            if let subcategory = selectedSubcategory {
-                // 显示该子分类的文件列表
-                VStack(alignment: .leading, spacing: 8) {
-                    Button(action: { selectedSubcategory = nil }) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "chevron.left")
-                            Text(loc.currentLanguage == .chinese ? "返回子分类" : "Back")
-                        }
-                        .foregroundColor(.blue)
-                        .font(.system(size: 13))
+                
+                // 全选/取消全选/排序
+                HStack(spacing: 12) {
+                    Button(action: {
+                        service.toggleCategorySelection(category, forceTo: true)
+                    }) {
+                        Text(loc.currentLanguage == .chinese ? "全选" : "Select All")
+                            .font(.system(size: 11))
+                            .foregroundColor(.blue)
                     }
                     .buttonStyle(.plain)
-                    .padding(.horizontal)
                     
-                    Text(loc.currentLanguage == .chinese ? subcategory.rawValue : subcategory.englishName)
-                        .font(.system(size: 14, weight: .semibold)) // Reduced from Headline
-                        .foregroundColor(.white)
-                        .padding(.horizontal)
+                    Button(action: {
+                        service.toggleCategorySelection(category, forceTo: false)
+                    }) {
+                        Text(loc.currentLanguage == .chinese ? "取消全选" : "Deselect All")
+                            .font(.system(size: 11))
+                            .foregroundColor(.orange)
+                    }
+                    .buttonStyle(.plain)
+                    
+                    Text(loc.currentLanguage == .chinese ? "排序方式 大小 ▼" : "Sort By Size ▼")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondaryText)
                 }
-                
-                // 文件列表
-                ScrollView {
-                    LazyVStack(spacing: 0) { // Removed spacing
-                        if subcategory == .userCache {
-                            // 特殊处理：按应用分组展示系统缓存
-                            ForEach(service.appCacheGroups) { group in
-                                AppCacheGroupRow(group: group, service: service, onToggleFile: { file in
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 12)
+            .padding(.bottom, 8)
+            
+            // 文件列表
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    if category == .userCache {
+                        // 特殊处理：按应用分组展示
+                        ForEach(service.appCacheGroups) { group in
+                            AppCacheGroupRow(group: group, service: service, onToggleFile: { file in
+                                service.toggleFileSelection(file: file, in: .userCache)
+                            })
+                            Divider().background(Color.white.opacity(0.05))
+                        }
+                        
+                        // 其他文件夹
+                        let orphanFiles = filesFor(category: .userCache).filter { file in
+                            !service.appCacheGroups.flatMap { $0.files }.contains { $0.url == file.url }
+                        }
+                        
+                        if !orphanFiles.isEmpty {
+                            ForEach(orphanFiles.sorted { $0.size > $1.size }, id: \.url) { file in
+                                FileItemRow(file: file, showPath: true, service: service, category: .userCache) {
                                     service.toggleFileSelection(file: file, in: .userCache)
-                                })
-                                Divider().background(Color.white.opacity(0.05))
-                            }
-                            
-                            // 同时也显示那些没有对应应用的散项
-                            let orphanFiles = filesFor(category: .userCache).filter { file in
-                                !service.appCacheGroups.flatMap { $0.files }.contains { $0.url == file.url }
-                            }
-                            
-                            if !orphanFiles.isEmpty {
-                                Text(loc.currentLanguage == .chinese ? "其他文件夹" : "Other Folders")
-                                    .font(.caption)
-                                    .foregroundColor(.secondaryText)
-                                    .padding(.top)
-                                
-                                ForEach(orphanFiles.sorted { $0.size > $1.size }, id: \.url) { file in
-                                    FileItemRow(file: file, showPath: true, service: service, onToggle: {
-                                        service.toggleFileSelection(file: file, in: .userCache)
-                                    })
-                                    Divider().background(Color.white.opacity(0.05))
                                 }
-                            }
-                        } else {
-                            // 常规列表展示
-                            ForEach(filesFor(category: subcategory).sorted { $0.size > $1.size }, id: \.url) { file in
-                                FileItemRow(file: file, showPath: true, service: service, onToggle: {
-                                    service.toggleFileSelection(file: file, in: subcategory)
-                                })
                                 Divider().background(Color.white.opacity(0.05))
                             }
                         }
+                    } else {
+                        // 常规列表展示
+                        ForEach(filesFor(category: category).sorted { $0.size > $1.size }, id: \.url) { file in
+                            FileItemRow(file: file, showPath: true, service: service, category: category) {
+                                service.toggleFileSelection(file: file, in: category)
+                            }
+                            Divider().background(Color.white.opacity(0.05))
+                        }
                     }
-                    .padding(.horizontal)
                 }
-            } else {
-                // 显示子分类列表
-                // 显示子分类列表
-                ScrollView {
-                    VStack(spacing: 0) { // Removed spacing
-                        DrillDownCategoryRow(icon: "person.crop.circle.fill", title: loc.currentLanguage == .chinese ? "用户缓存文件" : "User Cache", size: service.sizeFor(category: .userCache), count: service.countFor(category: .userCache), color: .cyan, onTap: { selectedSubcategory = .userCache })
-                        Divider().background(Color.white.opacity(0.05))
-                        DrillDownCategoryRow(icon: "internaldrive.fill", title: loc.currentLanguage == .chinese ? "系统缓存文件" : "System Cache", size: service.sizeFor(category: .systemCache), count: service.countFor(category: .systemCache), color: .blue, onTap: { selectedSubcategory = .systemCache })
-                        Divider().background(Color.white.opacity(0.05))
-                        DrillDownCategoryRow(icon: "arrow.down.circle.fill", title: loc.currentLanguage == .chinese ? "旧更新" : "Old Updates", size: service.sizeFor(category: .oldUpdates), count: service.countFor(category: .oldUpdates), color: .orange, onTap: { selectedSubcategory = .oldUpdates })
-                        Divider().background(Color.white.opacity(0.05))
-                        DrillDownCategoryRow(icon: "textformat.abc", title: loc.currentLanguage == .chinese ? "语言文件" : "Language Files", size: service.sizeFor(category: .languageFiles), count: service.countFor(category: .languageFiles), color: .purple, onTap: { selectedSubcategory = .languageFiles })
-                        Divider().background(Color.white.opacity(0.05))
-                        DrillDownCategoryRow(icon: "doc.text.fill", title: loc.currentLanguage == .chinese ? "系统日志文件" : "System Logs", size: service.sizeFor(category: .systemLogs), count: service.countFor(category: .systemLogs), color: .green, onTap: { selectedSubcategory = .systemLogs })
-                        Divider().background(Color.white.opacity(0.05))
-                        DrillDownCategoryRow(icon: "person.text.rectangle.fill", title: loc.currentLanguage == .chinese ? "用户日志文件" : "User Logs", size: service.sizeFor(category: .userLogs), count: service.countFor(category: .userLogs), color: .teal, onTap: { selectedSubcategory = .userLogs })
-                        Divider().background(Color.white.opacity(0.05))
-                        DrillDownCategoryRow(icon: "exclamationmark.triangle.fill", title: loc.currentLanguage == .chinese ? "损坏的登录项" : "Broken Login Items", size: service.sizeFor(category: .brokenLoginItems), count: service.countFor(category: .brokenLoginItems), color: .red, onTap: { selectedSubcategory = .brokenLoginItems })
-                    }
-                    .padding(.horizontal, 24) // Match header padding
-                }
+                .padding(.horizontal, 16)
             }
             
             Spacer()
@@ -479,9 +379,9 @@ struct AllCategoriesDetailSheet: View {
             ScrollView {
                 LazyVStack(spacing: 0) { // Removed spacing
                     ForEach(filesFor(category: category).sorted { $0.size > $1.size }, id: \.url) { file in
-                        FileItemRow(file: file, showPath: true, service: service, onToggle: {
+                        FileItemRow(file: file, showPath: true, service: service, category: category) {
                             service.toggleFileSelection(file: file, in: category)
-                        })
+                        }
                         Divider().background(Color.white.opacity(0.05))
                     }
                 }
@@ -756,104 +656,49 @@ struct AllCategoriesDetailSheet: View {
     }
 }
 
-// MARK: - 主分类行
-struct MainCategoryRow: View {
-    let icon: String
-    let title: String
-    let size: Int64
-    let count: Int
-    let color: Color
-    let isSelected: Bool
-    let onTap: () -> Void
-    
-    var body: some View {
-        Button(action: onTap) {
-            HStack(spacing: 12) {
-                ZStack {
-                    if isSelected {
-                        Circle() // Use Circle for selected state background like design
-                            .fill(color)
-                            .frame(width: 32, height: 32)
-                    } else {
-                        Circle()
-                            .fill(color.opacity(0.15))
-                            .frame(width: 32, height: 32)
-                    }
-                    
-                    Image(systemName: icon)
-                        .font(.system(size: 14))
-                        .foregroundColor(isSelected ? .white : color)
-                }
-                
-                VStack(alignment: .leading, spacing: 1) { // Reduced spacing
-                    Text(title)
-                        .font(.system(size: 13)) // Reduced from 14
-                        .foregroundColor(isSelected ? .white : .white.opacity(0.9))
-                        .lineLimit(1) // Ensure single line
-                        .fixedSize(horizontal: false, vertical: true)
-                    
-                    if count > 0 {
-                        Text("\(count)")
-                            .font(.system(size: 9, weight: .medium)) // Reduced from 10
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .background(Color.white.opacity(0.1))
-                            .cornerRadius(3)
-                            .foregroundColor(.white.opacity(0.7))
-                    }
-                }
-                
-                Spacer()
-                
-                Text(ByteCountFormatter.string(fromByteCount: size, countStyle: .file))
-                    .font(.system(size: 13)) // Regular weight
-                    .foregroundColor(.white)
-                
-                if isSelected {
-                    Image(systemName: "chevron.right")
-                        .foregroundColor(.white)
-                        .font(.system(size: 10))
-                }
-            }
-            .padding(.horizontal, 16) // Reduced padding
-            .padding(.vertical, 10)
-            .background(isSelected ? Color.white.opacity(0.1) : Color.clear)
-            .cornerRadius(8)
-            .contentShape(Rectangle()) // Ensure full area is clickable
-        }
-        .buttonStyle(.plain)
-    }
-}
-
 // MARK: - 文件项行（支持文件夹钻取）
 struct FileItemRow: View {
     let file: CleanerFileItem
     let showPath: Bool
     @ObservedObject var service: SmartCleanerService
+    var category: CleanerCategory = .userCache
     var onToggle: (() -> Void)? = nil
     
     @State private var isExpanded: Bool = false
     @State private var subItems: [CleanerFileItem] = []
     @State private var isLoading: Bool = false
+    @State private var isHovering: Bool = false
+    @State private var showDeleteConfirmation: Bool = false
+    
+    // 计算属性判断当前行是否应该显示为部分选中
+    private var selectionState: SmartCleanerService.SelectionState {
+        // 如果是文件夹且已加载子项
+        if file.isDirectory && !subItems.isEmpty {
+            let selectedCount = subItems.filter { $0.isSelected }.count
+            if selectedCount == 0 { return .none }
+            if selectedCount == subItems.count { return .all }
+            return .partial
+        }
+        // 默认回退到单个文件的选中状态
+        return file.isSelected ? .all : .none
+    }
     
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 12) {
-                // 可点击的复选框
-                Button(action: {
-                    onToggle?()
-                }) {
-                    Image(systemName: file.isSelected ? "checkmark.circle.fill" : "circle")
-                        .foregroundColor(file.isSelected ? .blue : .gray)
-                        .font(.system(size: 20))
+            HStack(spacing: 8) {
+                // 复选框 (三态)
+                TriStateCheckbox(state: selectionState) {
+                    toggleSelection()
                 }
-                .buttonStyle(.plain)
+                .frame(width: 18, height: 18)
+                .padding(.trailing, 4)
                 
                 Image(nsImage: file.icon)
                     .resizable()
-                    .frame(width: 32, height: 32)
+                    .frame(width: 24, height: 24)
+                    .padding(.trailing, 4)
                 
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: 1) {
                     HStack(spacing: 4) {
                         Text(file.name)
                             .font(.system(size: 13, weight: .medium))
@@ -869,7 +714,7 @@ struct FileItemRow: View {
                     
                     if showPath {
                         Text(file.url.deletingLastPathComponent().path)
-                            .font(.system(size: 11))
+                            .font(.system(size: 10))
                             .foregroundColor(.tertiaryText)
                             .lineLimit(1)
                     }
@@ -878,9 +723,15 @@ struct FileItemRow: View {
                 Spacer()
                 
                 Text(file.formattedSize)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 12, weight: .medium))
                     .foregroundColor(.white)
                 
+                // (已移除悬停操作按钮：查看与删除)
+                /*
+                if isHovering {
+                    HStack(spacing: 6) { ... }
+                }
+                */
                 
                 if file.isDirectory {
                     Button(action: {
@@ -899,14 +750,90 @@ struct FileItemRow: View {
                     .buttonStyle(.plain)
                 }
             }
-            .padding(.vertical, 8)
-            .padding(.horizontal, 4) // Minimal horizontal padding
+            .padding(.vertical, 4)
+            .padding(.horizontal, 8)
             .contentShape(Rectangle()) // Full area clickable
+            .onHover { isHovering = $0 }
+            // Tap on row content (except arrow) toggles selection
             .onTapGesture {
-                if file.isDirectory {
-                    toggleExpand()
-                } else {
-                    onToggle?()
+                toggleSelection()
+            }
+            .confirmationDialog(
+                LocalizationManager.shared.currentLanguage == .chinese ? "确认删除" : "Confirm Delete",
+                isPresented: $showDeleteConfirmation
+            ) {
+                Button(
+                    LocalizationManager.shared.currentLanguage == .chinese ? "删除" : "Delete",
+                    role: .destructive
+                ) {
+                    deleteSingleFile()
+                }
+                Button(
+                    LocalizationManager.shared.currentLanguage == .chinese ? "取消" : "Cancel",
+                    role: .cancel
+                ) {}
+            } message: {
+                let fileName = file.name
+                Text(LocalizationManager.shared.currentLanguage == .chinese ?
+                     "确定要删除\" \(fileName)\" 吗？此操作无法撤销。" :
+                     "Are you sure you want to delete \"\(fileName)\"? This action cannot be undone.")
+            }
+            .contextMenu {
+                // 仅在选中时显示"取消选择"
+                if file.isSelected {
+                    Button {
+                        onToggle?()
+                    } label: {
+                        let fileName = file.name
+                        Label(
+                            LocalizationManager.shared.currentLanguage == .chinese ? 
+                                "取消选择\"\(fileName)\"" : 
+                                "Deselect \"\(fileName)\"",
+                            systemImage: "checkmark.circle"
+                        )
+                    }
+                    
+                    Divider()
+                }
+                
+                // 在访达中显示
+                Button {
+                    openInFinder()
+                } label: {
+                    Label(
+                        LocalizationManager.shared.currentLanguage == .chinese ? 
+                            "在\"访达\"中显示" : 
+                            "Show in Finder",
+                        systemImage: "folder"
+                    )
+                }
+                
+                // 快速查看
+                Button {
+                    quickLookFile()
+                } label: {
+                    let fileName = file.name
+                    Label(
+                        LocalizationManager.shared.currentLanguage == .chinese ? 
+                            "快速查看\"\(fileName)\"" : 
+                            "Quick Look \"\(fileName)\"",
+                        systemImage: "eye"
+                    )
+                }
+                
+                Divider()
+                
+                // 忽略
+                Button {
+                    // TODO: 实现忽略功能
+                    print("忽略: \(file.name)")
+                } label: {
+                    Label(
+                        LocalizationManager.shared.currentLanguage == .chinese ? 
+                            "忽略" : 
+                            "Ignore",
+                        systemImage: "eye.slash"
+                    )
                 }
             }
             
@@ -914,16 +841,32 @@ struct FileItemRow: View {
             if isExpanded && !subItems.isEmpty {
                 VStack(spacing: 2) {
                     ForEach(subItems, id: \.url) { subFile in
-                        FileItemRow(file: subFile, showPath: false, service: service, onToggle: {
-                            // 子文件勾选：这里需要一个递归勾选逻辑，或者简单点只支持单选
-                            // 为了简化，我们只通过 service 切换该 URL 的状态
-                            service.toggleFileSelection(file: subFile, in: .userCache)
-                        })
+                        FileItemRow(file: subFile, showPath: false, service: service, category: category) {
+                            service.toggleFileSelection(file: subFile, in: category)
+                        }
                         .padding(.leading, 20)
                     }
                 }
                 .padding(.top, 4)
             }
+        }
+    }
+    
+    // 切换选中逻辑：递归更新本地 subItems 和 Service
+    private func toggleSelection() {
+        let newState = selectionState == .all ? false : true
+        
+        if file.isDirectory && !subItems.isEmpty {
+             for i in subItems.indices {
+                 if subItems[i].isSelected != newState {
+                     // Update Service for Child
+                     service.toggleFileSelection(file: subItems[i], in: category)
+                     // Update Local
+                     subItems[i].isSelected = newState
+                 }
+             }
+        } else {
+             onToggle?()
         }
     }
     
@@ -946,11 +889,29 @@ struct FileItemRow: View {
             }
         }
     }
+    
+    private func openInFinder() {
+        NSWorkspace.shared.selectFile(file.url.path, inFileViewerRootedAtPath: "")
+    }
+    
+    private func deleteSingleFile() {
+        Task {
+            let success = await service.deleteSingleFile(file, from: category)
+            if !success {
+                print("删除文件失败: \(file.url.path)")
+            }
+        }
+    }
+    
+    private func quickLookFile() {
+        // 使用NSWorkspace打开Quick Look
+        NSWorkspace.shared.open([file.url], withApplicationAt: URL(fileURLWithPath: "/System/Library/CoreServices/Finder.app"), configuration: NSWorkspace.OpenConfiguration())
+    }
 }
 
 // MARK: - 应用缓存分组行
 struct AppCacheGroupRow: View {
-    let group: AppCacheGroup
+    @ObservedObject var group: AppCacheGroup
     @ObservedObject var service: SmartCleanerService
     let onToggleFile: (CleanerFileItem) -> Void
     @State private var isExpanded: Bool = false
@@ -958,50 +919,87 @@ struct AppCacheGroupRow: View {
     var body: some View {
         VStack(spacing: 0) {
             // 主行：应用信息
-            Button(action: { withAnimation { isExpanded.toggle() } }) {
-                HStack(spacing: 12) {
+            HStack(spacing: 8) { // Compact spacing 12->8
+                // 勾选框 (独立交互)
+                TriStateCheckbox(state: selectionState) {
+                    service.toggleAppGroupSelection(group)
+                }
+                .frame(width: 18, height: 18) // Smaller 20->18
+                
+                // 内容区域
+                HStack(spacing: 8) { // Compact spacing 12->8
                     Image(nsImage: group.icon)
                         .resizable()
-                        .frame(width: 32, height: 32)
+                        .frame(width: 24, height: 24) // Smaller 32->24
                     
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: 1) { // Compact spacing
                         Text(group.appName)
-                            .font(.system(size: 14, weight: .semibold))
+                            .font(.system(size: 13, weight: .semibold)) // Smaller 14->13
                             .foregroundColor(.white)
                         
                         Text("\(group.files.count) " + (group.files.count == 1 ? "location" : "locations"))
-                            .font(.caption)
+                            .font(.caption2) // Smaller
                             .foregroundColor(.secondaryText)
                     }
                     
                     Spacer()
                     
-                    Text(ByteCountFormatter.string(fromByteCount: group.totalSize, countStyle: .file))
-                        .font(.system(size: 13, weight: .medium))
+                    // 选中数量
+                    Text("\(selectedCount)/\(group.files.count)")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondaryText)
+                    
+                    // 选中大小
+                    Text(ByteCountFormatter.string(fromByteCount: selectedSize, countStyle: .file))
+                        .font(.system(size: 12, weight: .medium)) // Smaller 13->12
                         .foregroundColor(.white)
                     
-                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 12))
-                        .foregroundColor(.secondaryText)
+                    Button(action: { withAnimation { isExpanded.toggle() } }) {
+                        Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                            .font(.system(size: 11)) // Smaller 12->11
+                            .foregroundColor(.secondaryText)
+                            .frame(width: 16, height: 16) // Smaller 24->16
+                            .contentShape(Rectangle())
+                    }
                 }
-                .padding(.vertical, 8)
+                // Tap on content area toggles group selection
                 .contentShape(Rectangle())
+                .onTapGesture {
+                    service.toggleAppGroupSelection(group)
+                }
             }
-            .buttonStyle(.plain)
+            .padding(.vertical, 4) // Compact vertical padding
             
             // 展开内容：具体子文件夹
             if isExpanded {
                 VStack(spacing: 2) {
                     ForEach(group.files.sorted { $0.size > $1.size }, id: \.url) { file in
-                        FileItemRow(file: file, showPath: false, service: service, onToggle: {
-                            onToggleFile(file)
-                        })
+                        FileItemRow(file: file, showPath: false, service: service, category: .userCache) {
+                            service.toggleFileSelection(file: file, in: .userCache)
+                        }
                         .padding(.leading, 16)
                     }
                 }
                 .padding(.top, 4)
             }
         }
+    }
+    
+    // MARK: - Helper Properties
+    
+    private var selectionState: SmartCleanerService.SelectionState {
+        let selectedCount = group.files.filter { $0.isSelected }.count
+        if selectedCount == 0 { return .none }
+        if selectedCount == group.files.count { return .all }
+        return .partial
+    }
+    
+    private var selectedSize: Int64 {
+        group.files.filter { $0.isSelected }.reduce(0) { $0 + $1.size }
+    }
+    
+    private var selectedCount: Int {
+        group.files.filter { $0.isSelected }.count
     }
 }
 
@@ -1087,3 +1085,14 @@ struct DetailSidebarRow: View {
         .buttonStyle(.plain)
     }
 }
+//
+//  ThreeColumnUIComponents.swift
+//  新增的三栏布局UI组件
+//
+//  Created for Smart Scan Detail View Redesign
+//
+
+import SwiftUI
+
+// MARK: - 主分类行（左侧栏）
+

@@ -151,10 +151,10 @@ class ScanServiceManager: ObservableObject {
     
     // MARK: - 统计信息
     
-    /// 获取总共可清理的空间大小
+    /// 获取总共可清理的空间大小（只计算已选中的文件）
     var totalCleanableSize: Int64 {
-        junkCleaner.totalSize +
-        deepCleanScanner.totalSize +
+        junkCleaner.selectedSize +
+        deepCleanScanner.selectedSize +
         smartCleanerService.totalCleanableSize
     }
     

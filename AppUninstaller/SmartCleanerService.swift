@@ -4,6 +4,82 @@ import SwiftUI
 import CryptoKit
 import Vision
 
+// MARK: - 主分类（用于三栏布局）
+enum MainCategory: String, CaseIterable, Identifiable {
+    case systemJunk = "系统垃圾"
+    case duplicates = "重复文件"
+    case similarPhotos = "相似照片"
+    case largeFiles = "大文件"
+    case virus = "病毒威胁"
+    case startupItems = "启动项"
+    case performanceApps = "性能优化"
+    case appUpdates = "应用更新"
+    
+    var id: String { rawValue }
+    
+    var englishName: String {
+        switch self {
+        case .systemJunk: return "System Junk"
+        case .duplicates: return "Duplicates"
+        case .similarPhotos: return "Similar Photos"
+        case .largeFiles: return "Large Files"
+        case .virus: return "Virus Threats"
+        case .startupItems: return "Startup Items"
+        case .performanceApps: return "Performance"
+        case .appUpdates: return "App Updates"
+        }
+    }
+    
+    var icon: String {
+        switch self {
+        case .systemJunk: return "trash.fill"
+        case .duplicates: return "doc.on.doc"
+        case .similarPhotos: return "photo.on.rectangle"
+        case .largeFiles: return "doc.fill"
+        case .virus: return "shield.lefthalf.filled"
+        case .startupItems: return "power.circle"
+        case .performanceApps: return "bolt.fill"
+        case .appUpdates: return "arrow.clockwise.circle"
+        }
+    }
+    
+    var color: Color {
+        switch self {
+        case .systemJunk: return .pink
+        case .duplicates: return .blue
+        case .similarPhotos: return .purple
+        case .largeFiles: return .orange
+        case .virus: return .red
+        case .startupItems: return .yellow
+        case .performanceApps: return .green
+        case .appUpdates: return .cyan
+        }
+    }
+    
+    // 获取该主分类下的子分类
+    var subcategories: [CleanerCategory] {
+        switch self {
+        case .systemJunk:
+            return [.userCache, .systemCache, .oldUpdates, .languageFiles, 
+                    .systemLogs, .userLogs, .brokenLoginItems]
+        case .duplicates:
+            return [.duplicates]
+        case .similarPhotos:
+            return [.similarPhotos]
+        case .largeFiles:
+            return [.largeFiles]
+        case .virus:
+            return [.virus]
+        case .startupItems:
+            return [.startupItems]
+        case .performanceApps:
+            return [.performanceApps]
+        case .appUpdates:
+            return [.appUpdates]
+        }
+    }
+}
+
 // MARK: - 清理类型
 enum CleanerCategory: String, CaseIterable {
     // 系统垃圾类别（新增）
@@ -164,13 +240,20 @@ struct DuplicateGroup: Identifiable {
 }
 
 // MARK: - 应用缓存分组
-struct AppCacheGroup: Identifiable {
+class AppCacheGroup: Identifiable, ObservableObject {
     let id = UUID()
     let appName: String
     let bundleId: String?
     let icon: NSImage
-    var files: [CleanerFileItem]
-    var isExpanded: Bool = false
+    @Published var files: [CleanerFileItem]
+    @Published var isExpanded: Bool = false
+    
+    init(appName: String, bundleId: String?, icon: NSImage, files: [CleanerFileItem]) {
+        self.appName = appName
+        self.bundleId = bundleId
+        self.icon = icon
+        self.files = files
+    }
     
     var totalSize: Int64 {
         files.reduce(0) { $0 + $1.size }
@@ -183,6 +266,14 @@ struct AppCacheGroup: Identifiable {
 
 // MARK: - 智能清理服务
 class SmartCleanerService: ObservableObject {
+    
+    // MARK: - 选中状态枚举
+    enum SelectionState {
+        case none      // 全部未选中
+        case partial   // 部分选中（半勾选）
+        case all       // 全部选中
+    }
+    
     // 按应用分组的缓存结果 (针对 userCache)
     @Published var appCacheGroups: [AppCacheGroup] = []
     
@@ -249,14 +340,16 @@ class SmartCleanerService: ObservableObject {
     
     // MARK: - 系统垃圾总大小
     var systemJunkTotalSize: Int64 {
-        systemCacheFiles.reduce(0) { $0 + $1.size } +
-        oldUpdateFiles.reduce(0) { $0 + $1.size } +
-        userCacheFiles.reduce(0) { $0 + $1.size } +
-        appCacheGroups.reduce(0) { $0 + $1.totalSize } +
-        languageFiles.reduce(0) { $0 + $1.size } +
-        systemLogFiles.reduce(0) { $0 + $1.size } +
-        userLogFiles.reduce(0) { $0 + $1.size } +
-        brokenLoginItems.reduce(0) { $0 + $1.size }
+        let systemCache = systemCacheFiles.filter { $0.isSelected }.reduce(0) { $0 + $1.size }
+        let oldUpdates = oldUpdateFiles.filter { $0.isSelected }.reduce(0) { $0 + $1.size }
+        let userCache = userCacheFiles.filter { $0.isSelected }.reduce(0) { $0 + $1.size }
+        let groupedCache = appCacheGroups.reduce(0) { $0 + $1.selectedSize }
+        let languages = languageFiles.filter { $0.isSelected }.reduce(0) { $0 + $1.size }
+        let sysLogs = systemLogFiles.filter { $0.isSelected }.reduce(0) { $0 + $1.size }
+        let userLogs = userLogFiles.filter { $0.isSelected }.reduce(0) { $0 + $1.size }
+        let brokenLogin = brokenLoginItems.filter { $0.isSelected }.reduce(0) { $0 + $1.size }
+        
+        return systemCache + oldUpdates + userCache + groupedCache + languages + sysLogs + userLogs + brokenLogin
     }
     
     var virusTotalSize: Int64 {
@@ -269,21 +362,21 @@ class SmartCleanerService: ObservableObject {
         case .systemJunk:
             return systemJunkTotalSize
         case .systemCache:
-            return systemCacheFiles.reduce(0) { $0 + $1.size }
+            return systemCacheFiles.filter { $0.isSelected }.reduce(0) { $0 + $1.size }
         case .oldUpdates:
-            return oldUpdateFiles.reduce(0) { $0 + $1.size }
+            return oldUpdateFiles.filter { $0.isSelected }.reduce(0) { $0 + $1.size }
         case .userCache:
-            let looseFilesSize = userCacheFiles.reduce(0) { $0 + $1.size }
-            let groupedFilesSize = appCacheGroups.reduce(0) { $0 + $1.totalSize }
+            let looseFilesSize = userCacheFiles.filter { $0.isSelected }.reduce(0) { $0 + $1.size }
+            let groupedFilesSize = appCacheGroups.reduce(0) { $0 + $1.selectedSize } // Use selectedSize property
             return looseFilesSize + groupedFilesSize
         case .languageFiles:
-            return languageFiles.reduce(0) { $0 + $1.size }
+            return languageFiles.filter { $0.isSelected }.reduce(0) { $0 + $1.size }
         case .systemLogs:
-            return systemLogFiles.reduce(0) { $0 + $1.size }
+            return systemLogFiles.filter { $0.isSelected }.reduce(0) { $0 + $1.size }
         case .userLogs:
-            return userLogFiles.reduce(0) { $0 + $1.size }
+            return userLogFiles.filter { $0.isSelected }.reduce(0) { $0 + $1.size }
         case .brokenLoginItems:
-            return brokenLoginItems.reduce(0) { $0 + $1.size }
+            return brokenLoginItems.filter { $0.isSelected }.reduce(0) { $0 + $1.size }
         case .duplicates:
             return duplicateGroups.reduce(0) { $0 + $1.wastedSize }
         case .similarPhotos:
@@ -366,9 +459,14 @@ class SmartCleanerService: ObservableObject {
             for gIdx in appCacheGroups.indices {
                 if let fIdx = appCacheGroups[gIdx].files.firstIndex(where: { $0.url == file.url }) {
                     appCacheGroups[gIdx].files[fIdx].isSelected.toggle()
+                    // 关键修复: 手动触发 Group 的更新通知，确保 AppCacheGroupRow 刷新
+                    appCacheGroups[gIdx].objectWillChange.send() 
                     break
                 }
             }
+            
+            // 关键修复: 手动触发 Service 的更新通知，确保 Summary View 刷新统计数据
+            self.objectWillChange.send()
         case .languageFiles:
             if let idx = languageFiles.firstIndex(where: { $0.url == file.url }) {
                 languageFiles[idx].isSelected.toggle()
@@ -424,6 +522,238 @@ class SmartCleanerService: ObservableObject {
         }
         
         return subItems.sorted { $0.size > $1.size }
+    }
+    
+    /// 删除单个文件
+    @MainActor
+    func deleteSingleFile(_ file: CleanerFileItem, from category: CleanerCategory) async -> Bool {
+        do {
+            // 使用 FileManager 删除文件
+            try fileManager.removeItem(at: file.url)
+            
+            // 从对应的数组中移除该文件
+            removeFileFromCategory(file, category: category)
+            
+            return true
+        } catch {
+            print("删除文件失败: \(file.url.path) - \(error)")
+            return false
+        }
+    }
+    
+    /// 从分类数组中移除文件
+    @MainActor
+    private func removeFileFromCategory(_ file: CleanerFileItem, category: CleanerCategory) {
+        switch category {
+        case .systemCache:
+            systemCacheFiles.removeAll { $0.url == file.url }
+        case .oldUpdates:
+            oldUpdateFiles.removeAll { $0.url == file.url }
+        case .userCache:
+            userCacheFiles.removeAll { $0.url == file.url }
+            // 同时更新分组中的该文件
+            for gIdx in appCacheGroups.indices {
+                appCacheGroups[gIdx].files.removeAll { $0.url == file.url }
+            }
+            // 移除空组
+            appCacheGroups.removeAll { $0.files.isEmpty }
+        case .languageFiles:
+            languageFiles.removeAll { $0.url == file.url }
+        case .systemLogs:
+            systemLogFiles.removeAll { $0.url == file.url }
+        case .userLogs:
+            userLogFiles.removeAll { $0.url == file.url }
+        case .brokenLoginItems:
+            brokenLoginItems.removeAll { $0.url == file.url }
+        case .localizations:
+            localizationFiles.removeAll { $0.url == file.url }
+        case .largeFiles:
+            largeFiles.removeAll { $0.url == file.url }
+        default:
+            break
+        }
+    }
+    
+    // MARK: - 主分类支持方法
+    
+    /// 获取分类对应的文件列表
+    @MainActor
+    func filesFor(category: CleanerCategory) -> [CleanerFileItem] {
+        switch category {
+        case .userCache: return userCacheFiles + appCacheGroups.flatMap { $0.files }
+        case .systemCache: return systemCacheFiles
+        case .oldUpdates: return oldUpdateFiles
+        case .languageFiles: return languageFiles
+        case .systemLogs: return systemLogFiles
+        case .userLogs: return userLogFiles
+        case .brokenLoginItems: return brokenLoginItems
+        case .duplicates: return duplicateGroups.flatMap { $0.files }
+        case .similarPhotos: return similarPhotoGroups.flatMap { $0.files }
+        case .largeFiles: return largeFiles
+        case .localizations: return localizationFiles
+        default: return []
+        }
+    }
+    
+    /// 获取主分类的统计信息
+    @MainActor
+    func statisticsFor(mainCategory: MainCategory) -> (count: Int, size: Int64) {
+        let allFiles = mainCategory.subcategories.flatMap { filesFor(category: $0) }.filter { $0.isSelected }
+        return (allFiles.count, allFiles.reduce(0) { $0 + $1.size })
+    }
+    
+    /// 获取子分类的统计信息
+    @MainActor
+    func statisticsFor(category: CleanerCategory) -> (count: Int, size: Int64) {
+        let files = filesFor(category: category).filter { $0.isSelected }
+        return (files.count, files.reduce(0) { $0 + $1.size })
+    }
+    
+    // MARK: - 选中状态检测
+    
+    /// 检查子分类的勾选状态
+    @MainActor
+    func getSelectionState(for category: CleanerCategory) -> SelectionState {
+        let files = filesFor(category: category)
+        guard !files.isEmpty else { return .none }
+        
+        let selectedCount = files.filter { $0.isSelected }.count
+        if selectedCount == 0 { return .none }
+        if selectedCount == files.count { return .all }
+        return .partial
+    }
+
+    /// 检查主分类的勾选状态
+    @MainActor
+    func getSelectionState(for mainCategory: MainCategory) -> SelectionState {
+        let allFiles = mainCategory.subcategories.flatMap { filesFor(category: $0) }
+        guard !allFiles.isEmpty else { return .none }
+        
+        let selectedCount = allFiles.filter { $0.isSelected }.count
+        if selectedCount == 0 { return .none }
+        if selectedCount == allFiles.count { return .all }
+        return .partial
+    }
+    
+    /// 切换主分类选中状态
+    @MainActor
+    func toggleMainCategorySelection(_ mainCategory: MainCategory) {
+        let currentState = getSelectionState(for: mainCategory)
+        // 如果当前是全部选中，则取消全选；否则（部分选中或未选中）全选
+        let newSelected = (currentState != .all)
+        
+        for category in mainCategory.subcategories {
+            toggleCategorySelection(category, forceTo: newSelected)
+        }
+        
+        // 确保触发更新
+        objectWillChange.send()
+    }
+    
+    /// 切换应用分组的选中状态（同步更新 userCacheFiles）
+    @MainActor
+    func toggleAppGroupSelection(_ group: AppCacheGroup) {
+        // 计算新状态：只要不是全选，就设为全选（如果是部分选中，操作是补全选中）
+        // 或者：只要是全选，就取消；否则全选。
+        // Finder逻辑：点击Checkbox时，如果是混合状态，通常变为全选或全不选。
+        // 根据 SelectionState 逻辑：
+        // State is All -> Toggle to None
+        // State is None -> Toggle to All
+        // State is Partial -> Toggle to All
+        
+        let allSelected = group.files.allSatisfy { $0.isSelected }
+        let targetState = !allSelected
+        
+        // 1. 更新 Group 内的文件状态 (引用类型直接更新)
+        for i in group.files.indices {
+            group.files[i].isSelected = targetState
+        }
+        
+        // 2. 同步更新 userCacheFiles (打平的列表)
+        // 建立 Group 文件 URL 集合以加速查找
+        let groupURLs = Set(group.files.map { $0.url })
+        for i in userCacheFiles.indices {
+            if groupURLs.contains(userCacheFiles[i].url) {
+                userCacheFiles[i].isSelected = targetState
+            }
+        }
+        
+        objectWillChange.send()
+    }
+    
+    /// 切换整个子分类的选中状态
+    @MainActor
+    func toggleCategorySelection(_ category: CleanerCategory, forceTo: Bool? = nil) {
+        let files = filesFor(category: category)
+        // 如果提供了强制状态则使用之，否则反转当前全选状态
+        let targetState = forceTo ?? !files.allSatisfy { $0.isSelected }
+        
+        // 全选或全不选
+        switch category {
+        case .systemCache:
+            for i in systemCacheFiles.indices {
+                systemCacheFiles[i].isSelected = targetState
+            }
+        case .oldUpdates:
+            for i in oldUpdateFiles.indices {
+                oldUpdateFiles[i].isSelected = targetState
+            }
+        case .userCache:
+            for i in userCacheFiles.indices {
+                userCacheFiles[i].isSelected = targetState
+            }
+            // 同时更新分组
+            for gIdx in appCacheGroups.indices {
+                for fIdx in appCacheGroups[gIdx].files.indices {
+                    appCacheGroups[gIdx].files[fIdx].isSelected = targetState
+                }
+            }
+        case .languageFiles:
+            for i in languageFiles.indices {
+                languageFiles[i].isSelected = targetState
+            }
+        case .systemLogs:
+            for i in systemLogFiles.indices {
+                systemLogFiles[i].isSelected = targetState
+            }
+        case .userLogs:
+            for i in userLogFiles.indices {
+                userLogFiles[i].isSelected = targetState
+            }
+        case .brokenLoginItems:
+            for i in brokenLoginItems.indices {
+                brokenLoginItems[i].isSelected = targetState
+            }
+        case .largeFiles:
+            for i in largeFiles.indices {
+                largeFiles[i].isSelected = targetState
+            }
+        case .duplicates:
+            for gIdx in duplicateGroups.indices {
+                for fIdx in duplicateGroups[gIdx].files.indices {
+                    duplicateGroups[gIdx].files[fIdx].isSelected = targetState
+                }
+            }
+        case .similarPhotos:
+            for gIdx in similarPhotoGroups.indices {
+                for fIdx in similarPhotoGroups[gIdx].files.indices {
+                    similarPhotoGroups[gIdx].files[fIdx].isSelected = targetState
+                }
+            }
+        default:
+            break
+        }
+        
+        // 手动触发ObservableObject更新，因为修改数组元素的属性不会自动触发
+        objectWillChange.send()
+    }
+    
+    /// 检查子分类是否全选
+    @MainActor
+    func isCategoryAllSelected(_ category: CleanerCategory) -> Bool {
+        let files = filesFor(category: category)
+        guard !files.isEmpty else { return false }
+        return files.allSatisfy { $0.isSelected }
     }
     
     // MARK: - 扫描系统垃圾
@@ -870,25 +1200,44 @@ class SmartCleanerService: ObservableObject {
         // 辅助闭包：由路径或 ID 找出最匹配的应用信息
         let findAppInfo: (String) -> (name: String, path: URL, bundleId: String?)? = { id in
             let lowerId = id.lowercased()
-            // 尝试 Bundle ID 匹配
+            // 1. 尝试 Bundle ID 完全匹配
             if let info = appInfo.appMap[lowerId] { return info }
             
-            // 尝试名称模糊匹配
+            // 2. 尝试寻找最佳（最长）匹配
+            // 避免短词（如 "Google"）误匹配长词（如 "Google Antigravity" 应优先匹配 "Antigravity" 如果存在）
+            var bestMatch: (info: (name: String, path: URL, bundleId: String?), score: Int)? = nil
+            let minMatchLength = 3
+            
             for (key, info) in appInfo.appMap {
-                if lowerId.contains(key) || key.contains(lowerId) {
-                    return info
+                // key 必须足够长才允许被包含匹配
+                if key.count < minMatchLength { continue }
+                
+                // 计算匹配分数 (key 长度)
+                // 优先匹配更具体的应用名
+                if lowerId.contains(key) {
+                    // ID 包含 AppKey (e.g. com.google.Chrome contains Chrome)
+                    let score = key.count
+                    if score > (bestMatch?.score ?? 0) {
+                        bestMatch = (info, score)
+                    }
+                } else if key.contains(lowerId) {
+                    // AppKey 包含 ID (e.g. Google Chrome contains Chrome)
+                    let score = lowerId.count
+                    if score > (bestMatch?.score ?? 0) {
+                        bestMatch = (info, score)
+                    }
                 }
             }
-            return nil
+            return bestMatch?.info
         }
         
         // 辅助闭包：添加文件到组或散项
         let addItem: (CleanerFileItem, String) -> Void = { item, appIdentifier in
             if let info = findAppInfo(appIdentifier) {
                 let groupKey = info.bundleId ?? info.name.lowercased()
-                if var group = groupsMap[groupKey] {
+                if let group = groupsMap[groupKey] {
                     group.files.append(item)
-                    groupsMap[groupKey] = group
+                    // groupsMap[groupKey] = group // 引用类型无需重新赋值
                 } else {
                     let icon = NSWorkspace.shared.icon(forFile: info.path.path)
                     groupsMap[groupKey] = AppCacheGroup(
@@ -2790,14 +3139,35 @@ class SmartCleanerService: ObservableObject {
         }
     }
     
-    // 总可清理大小（包括选中的大文件）
+    // 总可清理大小（只计算已选中的文件）
     var totalCleanableSize: Int64 {
-        let dupSize = duplicateGroups.reduce(0) { $0 + $1.wastedSize }
-        let photoSize = similarPhotoGroups.reduce(0) { $0 + $1.wastedSize }
+        // 系统垃圾分类
+        let userCacheSize = userCacheFiles.filter { $0.isSelected }.reduce(0) { $0 + $1.size }
+        let systemCacheSize = systemCacheFiles.filter { $0.isSelected }.reduce(0) { $0 + $1.size }
+        let oldUpdatesSize = oldUpdateFiles.filter { $0.isSelected }.reduce(0) { $0 + $1.size }
+        let languageFilesSize = languageFiles.filter { $0.isSelected }.reduce(0) { $0 + $1.size }
+        let systemLogsSize = systemLogFiles.filter { $0.isSelected }.reduce(0) { $0 + $1.size }
+        let userLogsSize = userLogFiles.filter { $0.isSelected }.reduce(0) { $0 + $1.size }
+        let brokenLoginItemsSize = brokenLoginItems.filter { $0.isSelected }.reduce(0) { $0 + $1.size }
+        
+        // 重复文件（只计算选中的文件）
+        let dupSize = duplicateGroups.flatMap { $0.files }.filter { $0.isSelected }.reduce(0) { $0 + $1.size }
+        
+        // 相似照片（只计算选中的文件）
+        let photoSize = similarPhotoGroups.flatMap { $0.files }.filter { $0.isSelected }.reduce(0) { $0 + $1.size }
+        
+        // 本地化文件
         let locSize = localizationFiles.filter { $0.isSelected }.reduce(0) { $0 + $1.size }
+        
+        // 大文件
         let largeSize = largeFiles.filter { $0.isSelected }.reduce(0) { $0 + $1.size }
+        
+        // 病毒威胁
         let virusSize = virusThreats.filter { $0.isSelected }.reduce(0) { $0 + $1.size }
-        return dupSize + photoSize + locSize + largeSize + virusSize
+        
+        return userCacheSize + systemCacheSize + oldUpdatesSize + languageFilesSize + 
+               systemLogsSize + userLogsSize + brokenLoginItemsSize + 
+               dupSize + photoSize + locSize + largeSize + virusSize
     }
     
     func toggleStartupItem(_ item: LaunchItem) async {
