@@ -78,7 +78,14 @@ class SafetyGuard {
         "com.apple.HIToolbox.plist",
         "com.apple.LaunchServices.QuarantineEventsV2",
         "com.apple.recentitems.plist",
-        "com.apple.sidebarlists.plist"
+        "com.apple.sidebarlists.plist",
+        
+        // 账户与认证 (重要修复)
+        "MobileMeAccounts.plist",           // iCloud 账户信息 (旧名 MobileMe)
+        "com.apple.accountsd.plist",        // 账户守护进程
+        "com.apple.Passbook.plist",         // 钱包/Apple Pay
+        "com.apple.commerce.plist",         // App Store 购买记录
+        "com.apple.tourist.plist"           // 系统引导状态
     ]
     
     /// 系统关键目录 (绝对不能扫描/删除)
