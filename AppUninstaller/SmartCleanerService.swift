@@ -191,11 +191,12 @@ struct CleanerFileItem: Identifiable, Hashable, Sendable {
     // 用于树形展示的自引用
     var children: [CleanerFileItem]? = nil
     
-    init(url: URL, name: String, size: Int64, groupId: String, isDirectory: Bool? = nil) {
+    init(url: URL, name: String, size: Int64, groupId: String, isDirectory: Bool? = nil, isSelected: Bool = true) {
         self.url = url
         self.name = name
         self.size = size
         self.groupId = groupId
+        self.isSelected = isSelected
         if let isDir = isDirectory {
             self.isDirectory = isDir
         } else {
@@ -1254,38 +1255,48 @@ class SmartCleanerService: ObservableObject {
         }
         
         // 1. 扫描整个 ~/Library/Caches 目录
+        // ⚠️ 安全改进：不再扫描应用相关缓存，只扫描明确的系统缓存
         let cacheURL = home.appendingPathComponent("Library/Caches")
         if let contents = try? fileManager.contentsOfDirectory(at: cacheURL, includingPropertiesForKeys: nil) {
             for itemURL in contents {
                 let size = calculateSize(at: itemURL)
                 if size > 50 * 1024 {
                     let bundleId = itemURL.lastPathComponent
-                    let isOrphan = isOrphanedFile(bundleId: bundleId, installedIds: installedAppBundleIds)
+                    // ⚠️ 跳过应用相关缓存，只处理系统级缓存
+                    // 检查是否为已安装应用的缓存，如果是则跳过
+                    if !bundleId.hasPrefix("com.apple.") && installedAppBundleIds.contains(bundleId.lowercased()) {
+                        continue  // 跳过已安装应用的缓存
+                    }
+                    
+                    // 只保留系统缓存和明确的临时文件
                     let displayName = formatAppName(bundleId)
                     
                     let fileItem = CleanerFileItem(
                         url: itemURL,
-                        name: isOrphan ? "⚠️ \(displayName) (已卸载)" : displayName,
+                        name: displayName,
                         size: size,
                         groupId: "userCache",
-                        isDirectory: true // 这些根目录通常是文件夹
+                        isDirectory: true
                     )
                     
-                    if !isOrphan {
-                        addItem(fileItem, bundleId)
-                    } else {
-                        items.append(fileItem)
-                    }
+                    // 不再使用 addItem 添加到应用分组，直接作为散项处理
+                    items.append(fileItem)
                 }
             }
         }
         
         // 2. 扫描 ~/Library/Containers 中的缓存
+        // ⚠️ 安全改进：跳过已安装应用的容器缓存
         let containersURL = home.appendingPathComponent("Library/Containers")
         if let containers = try? fileManager.contentsOfDirectory(at: containersURL, includingPropertiesForKeys: nil) {
             for containerURL in containers {
                 let bundleId = containerURL.lastPathComponent
-                let isOrphan = isOrphanedFile(bundleId: bundleId, installedIds: installedAppBundleIds)
+                
+                // ⚠️ 跳过已安装应用的容器缓存
+                if installedAppBundleIds.contains(bundleId.lowercased()) {
+                    continue
+                }
+                
                 let appName = formatAppName(bundleId)
                 
                 // 扫描容器的 Data/Library/Caches
@@ -1295,15 +1306,11 @@ class SmartCleanerService: ObservableObject {
                     if size > 50 * 1024 {
                         let fileItem = CleanerFileItem(
                             url: containerCacheURL,
-                            name: isOrphan ? "⚠️ \(appName) 容器缓存 (已卸载)" : "\(appName) 容器缓存",
+                            name: "\(appName) 容器缓存",
                             size: size,
                             groupId: "userCache"
                         )
-                        if !isOrphan {
-                            addItem(fileItem, bundleId)
-                        } else {
-                            items.append(fileItem)
-                        }
+                        items.append(fileItem)
                     }
                 }
                 
@@ -1318,13 +1325,14 @@ class SmartCleanerService: ObservableObject {
                             size: size,
                             groupId: "userCache"
                         )
-                        addItem(fileItem, bundleId)
+                        items.append(fileItem)
                     }
                 }
             }
         }
         
         // 3. 扫描 ~/Library/Saved Application State
+        // ⚠️ 安全改进：跳过已安装应用的状态文件
         let runningAppIds = Set(NSWorkspace.shared.runningApplications.compactMap { $0.bundleIdentifier?.lowercased() })
         let savedStateURL = home.appendingPathComponent("Library/Saved Application State")
         if let contents = try? fileManager.contentsOfDirectory(at: savedStateURL, includingPropertiesForKeys: nil) {
@@ -1332,30 +1340,35 @@ class SmartCleanerService: ObservableObject {
                 let bundleId = itemURL.lastPathComponent.replacingOccurrences(of: ".savedState", with: "")
                 if runningAppIds.contains(bundleId.lowercased()) { continue }
                 
+                // ⚠️ 跳过已安装应用的状态文件
+                if installedAppBundleIds.contains(bundleId.lowercased()) {
+                    continue
+                }
+                
                 let size = calculateSize(at: itemURL)
                 if size > 5 * 1024 {
-                    let isOrphan = isOrphanedFile(bundleId: bundleId, installedIds: installedAppBundleIds)
                     let fileItem = CleanerFileItem(
                         url: itemURL,
-                        name: isOrphan ? "⚠️ \(formatAppName(bundleId)) 状态 (已卸载)" : "\(formatAppName(bundleId)) 状态",
+                        name: "\(formatAppName(bundleId)) 状态",
                         size: size,
                         groupId: "userCache"
                     )
-                    if !isOrphan {
-                        addItem(fileItem, bundleId)
-                    } else {
-                        items.append(fileItem)
-                    }
+                    items.append(fileItem)
                 }
             }
         }
         
         // 4. 扫描 ~/Library/Application Support 中的缓存目录
+        // ⚠️ 安全改进：跳过已安装应用的缓存目录
         let appSupportURL = home.appendingPathComponent("Library/Application Support")
         if let apps = try? fileManager.contentsOfDirectory(at: appSupportURL, includingPropertiesForKeys: nil) {
             for appURL in apps {
                 let appName = appURL.lastPathComponent
-                let isOrphan = isOrphanedAppSupport(dirName: appName, installedIds: installedAppBundleIds)
+                
+                // ⚠️ 跳过已安装应用的缓存
+                if !isOrphanedAppSupport(dirName: appName, installedIds: installedAppBundleIds) {
+                    continue
+                }
                 
                 for cacheDirName in ["Cache", "Caches", "cache", "GPUCache", "Code Cache", "ShaderCache"] {
                     let cacheDir = appURL.appendingPathComponent(cacheDirName)
@@ -1364,15 +1377,11 @@ class SmartCleanerService: ObservableObject {
                         if size > 50 * 1024 {
                             let fileItem = CleanerFileItem(
                                 url: cacheDir,
-                                name: isOrphan ? "⚠️ \(appName) \(cacheDirName) (已卸载)" : "\(appName) \(cacheDirName)",
+                                name: "\(appName) \(cacheDirName)",
                                 size: size,
                                 groupId: "userCache"
                             )
-                            if !isOrphan {
-                                addItem(fileItem, appName)
-                            } else {
-                                items.append(fileItem)
-                            }
+                            items.append(fileItem)
                         }
                     }
                 }
@@ -1380,25 +1389,26 @@ class SmartCleanerService: ObservableObject {
         }
         
         // 5. 扫描 ~/Library/Preferences (已卸载应用的 plist)
-        let prefsURL = home.appendingPathComponent("Library/Preferences")
-        if let prefs = try? fileManager.contentsOfDirectory(at: prefsURL, includingPropertiesForKeys: nil) {
-            for prefURL in prefs {
-                if prefURL.pathExtension == "plist" {
-                    let bundleId = prefURL.deletingPathExtension().lastPathComponent
-                    if isOrphanedFile(bundleId: bundleId, installedIds: installedAppBundleIds) {
-                        if let attrs = try? fileManager.attributesOfItem(atPath: prefURL.path),
-                           let size = attrs[.size] as? Int64, size > 1024 {
-                            items.append(CleanerFileItem(
-                                url: prefURL,
-                                name: "⚠️ \(formatAppName(bundleId)) 偏好设置 (已卸载)",
-                                size: size,
-                                groupId: "userCache"
-                            ))
-                        }
-                    }
-                }
-            }
-        }
+        // ⚠️ 安全改进：暂时禁用已卸载应用残留扫描，用户反馈会误删正常应用文件
+        // let prefsURL = home.appendingPathComponent("Library/Preferences")
+        // if let prefs = try? fileManager.contentsOfDirectory(at: prefsURL, includingPropertiesForKeys: nil) {
+        //     for prefURL in prefs {
+        //         if prefURL.pathExtension == "plist" {
+        //             let bundleId = prefURL.deletingPathExtension().lastPathComponent
+        //             if isOrphanedFile(bundleId: bundleId, installedIds: installedAppBundleIds) {
+        //                 if let attrs = try? fileManager.attributesOfItem(atPath: prefURL.path),
+        //                    let size = attrs[.size] as? Int64, size > 1024 {
+        //                     items.append(CleanerFileItem(
+        //                         url: prefURL,
+        //                         name: "⚠️ \(formatAppName(bundleId)) 偏好设置 (已卸载)",
+        //                         size: size,
+        //                         groupId: "userCache"
+        //                     ))
+        //                 }
+        //             }
+        //         }
+        //     }
+        // }
         
         // 6. 已移除 ~/Library/Cookies 扫描 - 删除会导致所有网站登录状态丢失
         // 如需清理 Cookies，请使用隐私清理模块并明确确认
@@ -2414,11 +2424,13 @@ class SmartCleanerService: ObservableObject {
                   let isDir = values.isDirectory, !isDir,
                   let size = values.fileSize, Int64(size) >= minSize else { continue }
             
+            // ⚠️ 安全改进：大文件默认不勾选，需要用户手动确认才清理
             let item = CleanerFileItem(
                 url: fileURL,
                 name: fileURL.lastPathComponent,
                 size: Int64(size),
-                groupId: "large"
+                groupId: "large",
+                isSelected: false  // 默认不选中
             )
             items.append(item)
         }
@@ -2659,14 +2671,16 @@ class SmartCleanerService: ObservableObject {
         if shouldStopScanning { return }
         
         // --- 7. 性能优化 (后台应用) ---
-        await MainActor.run { currentCategory = .performanceApps; currentScanPath = "Analyzing performance..." }
-        await MainActor.run {
-            self.systemOptimizer.scanRunningApps()
-            self.systemOptimizer.selectAllApps(true) 
-            self.performanceApps = self.systemOptimizer.runningApps
-            _ = scannedCategories.insert(.performanceApps)
-            scanProgress = 0.875
-        }
+        // ⚠️ 暂时禁用：用户反馈智能扫描清理会把应用搞废，暂时隐藏此功能
+        // await MainActor.run { currentCategory = .performanceApps; currentScanPath = "Analyzing performance..." }
+        // await MainActor.run {
+        //     self.systemOptimizer.scanRunningApps()
+        //     self.systemOptimizer.selectAllApps(true) 
+        //     self.performanceApps = self.systemOptimizer.runningApps
+        //     _ = scannedCategories.insert(.performanceApps)
+        //     scanProgress = 0.875
+        // }
+        await MainActor.run { scanProgress = 0.875 }
         if shouldStopScanning { return }
         
         // --- 8. 应用更新检查 ---
@@ -2778,7 +2792,8 @@ class SmartCleanerService: ObservableObject {
         }
         
         // 系统缓存
-        for file in systemCacheFiles {
+        // ⚠️ 严重 BUG 修复：添加 isSelected 检查
+        for file in systemCacheFiles where file.isSelected {
             if safeDelete(file: file) {
                 totalSize += file.size
                 totalSuccess += 1
@@ -2786,7 +2801,8 @@ class SmartCleanerService: ObservableObject {
         }
         
         // 旧更新
-        for file in oldUpdateFiles {
+        // ⚠️ 严重 BUG 修复：添加 isSelected 检查
+        for file in oldUpdateFiles where file.isSelected {
             if safeDelete(file: file) {
                 totalSize += file.size
                 totalSuccess += 1
@@ -2794,21 +2810,25 @@ class SmartCleanerService: ObservableObject {
         }
         
         // 语言文件
-        for file in languageFiles {
-            if safeDelete(file: file) {
-                totalSize += file.size
-                totalSuccess += 1
-            } else { totalFailed += 1 }
-        }
+        // ⚠️ 严重 BUG 修复：添加 isSelected 检查
+        // ⚠️ 暂时禁用：删除应用的 .lproj 文件会破坏代码签名导致应用无法启动
+        // for file in languageFiles where file.isSelected {
+        //     if safeDelete(file: file) {
+        //         totalSize += file.size
+        //         totalSuccess += 1
+        //     } else { totalFailed += 1 }
+        // }
         
         // 日志
-        for file in systemLogFiles {
+        // ⚠️ 严重 BUG 修复：添加 isSelected 检查
+        for file in systemLogFiles where file.isSelected {
             if safeDelete(file: file) {
                 totalSize += file.size
                 totalSuccess += 1
             } else { totalFailed += 1 }
         }
-        for file in userLogFiles {
+        // ⚠️ 严重 BUG 修复：添加 isSelected 检查
+        for file in userLogFiles where file.isSelected {
             if safeDelete(file: file) {
                 totalSize += file.size
                 totalSuccess += 1
@@ -2816,7 +2836,8 @@ class SmartCleanerService: ObservableObject {
         }
         
         // 损坏的登录项 - 这些通常只是 plist，但也可能需要权限
-        for file in brokenLoginItems {
+        // ⚠️ 严重 BUG 修复：添加 isSelected 检查
+        for file in brokenLoginItems where file.isSelected {
             if safeDelete(file: file) {
                 totalSize += file.size
                 totalSuccess += 1
@@ -2831,10 +2852,13 @@ class SmartCleanerService: ObservableObject {
                 cleaningCurrentCategory = .duplicates
                 cleaningDescription = "Cleaning Duplicates..."
             }
+            // ⚠️ 严重 BUG 修复：添加 isSelected 检查
             for i in 0..<duplicateGroups.count {
                 for j in 1..<duplicateGroups[i].files.count { // 保留第一个
-                    if safeDelete(file: duplicateGroups[i].files[j]) {
-                        totalSize += duplicateGroups[i].files[j].size
+                    let file = duplicateGroups[i].files[j]
+                    guard file.isSelected else { continue }
+                    if safeDelete(file: file) {
+                        totalSize += file.size
                         totalSuccess += 1
                     } else { totalFailed += 1 }
                 }
@@ -2848,10 +2872,13 @@ class SmartCleanerService: ObservableObject {
                 cleaningCurrentCategory = .similarPhotos
                 cleaningDescription = "Cleaning Similar Photos..."
             }
+            // ⚠️ 严重 BUG 修复：添加 isSelected 检查
             for i in 0..<similarPhotoGroups.count {
                 for j in 1..<similarPhotoGroups[i].files.count {
-                    if safeDelete(file: similarPhotoGroups[i].files[j]) {
-                        totalSize += similarPhotoGroups[i].files[j].size
+                    let file = similarPhotoGroups[i].files[j]
+                    guard file.isSelected else { continue }
+                    if safeDelete(file: file) {
+                        totalSize += file.size
                         totalSuccess += 1
                     } else { totalFailed += 1 }
                 }
@@ -2860,21 +2887,23 @@ class SmartCleanerService: ObservableObject {
         }
         
         // 4. 清理多语言本地化文件
-        if !localizationFiles.isEmpty {
-            await MainActor.run {
-                cleaningCurrentCategory = .localizations
-                cleaningDescription = "Cleaning Localizations..."
-            }
-            for file in localizationFiles { // 这里的都是选中的
-                 if file.isSelected {
-                     if safeDelete(file: file) {
-                        totalSize += file.size
-                        totalSuccess += 1
-                    } else { totalFailed += 1 }
-                 }
-            }
-            await MainActor.run { _ = cleanedCategories.insert(.localizations) }
-        }
+        // ⚠️ 严重 BUG 修复：完全禁用此功能
+        // 删除应用的 .lproj 文件会破坏 macOS 代码签名，导致应用报告"已损坏"无法启动
+        // if !localizationFiles.isEmpty {
+        //     await MainActor.run {
+        //         cleaningCurrentCategory = .localizations
+        //         cleaningDescription = "Cleaning Localizations..."
+        //     }
+        //     for file in localizationFiles {
+        //          if file.isSelected {
+        //              if safeDelete(file: file) {
+        //                 totalSize += file.size
+        //                 totalSuccess += 1
+        //             } else { totalFailed += 1 }
+        //          }
+        //     }
+        //     await MainActor.run { _ = cleanedCategories.insert(.localizations) }
+        // }
         
         // 5. 清理大文件
         if !largeFiles.isEmpty {
@@ -2922,24 +2951,25 @@ class SmartCleanerService: ObservableObject {
         }
         
         // 8. 性能优化 (关闭后台应用)
-        if !performanceApps.isEmpty {
-            await MainActor.run {
-                cleaningCurrentCategory = .performanceApps
-                cleaningDescription = "Optimizing Performance..."
-            }
-            // 确保 SystemOptimizer 里的 runningApps 被选中
-             await MainActor.run {
-                 for app in self.performanceApps where app.isSelected {
-                     // Sync selection just in case
-                     if let optimizerApp = self.systemOptimizer.runningApps.first(where: { $0.id == app.id }) {
-                         optimizerApp.isSelected = true
-                     }
-                 }
-             }
-            let killed = await systemOptimizer.terminateSelectedApps()
-            totalSuccess += killed
-             await MainActor.run { _ = cleanedCategories.insert(.performanceApps) }
-        }
+        // ⚠️ 暂时禁用：用户反馈智能扫描清理会把应用搞废，暂时隐藏此功能
+        // if !performanceApps.isEmpty {
+        //     await MainActor.run {
+        //         cleaningCurrentCategory = .performanceApps
+        //         cleaningDescription = "Optimizing Performance..."
+        //     }
+        //     // 确保 SystemOptimizer 里的 runningApps 被选中
+        //      await MainActor.run {
+        //          for app in self.performanceApps where app.isSelected {
+        //              // Sync selection just in case
+        //              if let optimizerApp = self.systemOptimizer.runningApps.first(where: { $0.id == app.id }) {
+        //                  optimizerApp.isSelected = true
+        //              }
+        //          }
+        //      }
+        //     let killed = await systemOptimizer.terminateSelectedApps()
+        //     totalSuccess += killed
+        //      await MainActor.run { _ = cleanedCategories.insert(.performanceApps) }
+        // }
         
         // 9. 应用更新
         if hasAppUpdates {

@@ -712,8 +712,15 @@ class DeepCleanScanner: ObservableObject {
     /// 删除单个项目
     @MainActor
     func deleteSingleItem(_ item: DeepCleanItem) async -> Bool {
+        // ⚠️ BUG 修复：添加 SafetyGuard 检查
+        if !SafetyGuard.shared.isSafeToDelete(item.url) {
+            print("[DeepClean] 🛡️ SafetyGuard blocked deletion: \(item.url.path)")
+            return false
+        }
+        
         do {
-            try fileManager.removeItem(at: item.url)
+            // ⚠️ 安全改进：使用 trashItem 替代 removeItem，支持从废纸篓恢复
+            try fileManager.trashItem(at: item.url, resultingItemURL: nil)
             items.removeAll { $0.id == item.id }
             totalSize -= item.size
             return true

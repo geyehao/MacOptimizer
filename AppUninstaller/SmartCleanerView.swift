@@ -58,8 +58,8 @@ struct SmartCleanerView: View {
                !service.systemCacheFiles.isEmpty ||
                !service.virusThreats.isEmpty ||
                service.hasAppUpdates ||
-               !service.startupItems.isEmpty ||
-               !service.performanceApps.isEmpty
+               !service.startupItems.isEmpty //||
+               // ⚠️ 暂时禁用：!service.performanceApps.isEmpty
     }
 
     // 计算扫描到的总大小
@@ -340,14 +340,15 @@ struct SmartCleanerView: View {
             )
             
             // 3. Speed Group
+            // ⚠️ 暂时禁用 performanceApps：用户反馈智能扫描清理会把应用搞废
             itemColumn(
                 title: loc.currentLanguage == .chinese ? "速度" : "Speed",
                 iconName: "smart-scan.2f4ddf59", // Speedometer
                 description: state == .scanning ? (loc.currentLanguage == .chinese ? "定义合适的任务..." : "Defining suitable tasks...") : (loc.currentLanguage == .chinese ? "提升系统性能" : "Boost system performance"),
-                categories: [.startupItems, .performanceApps],
+                categories: [.startupItems], // 移除 .performanceApps
                 state: state,
                 color: Color(red: 0.9, green: 0.3, blue: 0.5), // Pink
-                currentPath: (service.isScanning && [.startupItems, .performanceApps].contains(service.currentCategory)) ? service.currentScanPath : nil
+                currentPath: (service.isScanning && service.currentCategory == .startupItems) ? service.currentScanPath : nil
             )
         }
         .padding(.horizontal, 40)
@@ -468,9 +469,8 @@ struct SmartCleanerView: View {
                                 .font(.system(size: 32, weight: .light))
                                 .foregroundColor(Color.green)
                          }
-                    } else {
-                        // Speed Result: Items count
-                        let count = service.startupItems.count + service.performanceApps.count
+                        // ⚠️ 暂时禁用 performanceApps
+                        let count = service.startupItems.count // + service.performanceApps.count
                         if count > 0 {
                             Text("\(count)")
                                 .font(.system(size: 32, weight: .light))
@@ -509,8 +509,8 @@ struct SmartCleanerView: View {
                             .font(.system(size: 12))
                             .foregroundColor(.white.opacity(0.6))
                     }
-                } else {
-                    let count = service.startupItems.count + service.performanceApps.count
+                    // ⚠️ 暂时禁用 performanceApps
+                    let count = service.startupItems.count // + service.performanceApps.count
                     if count > 0 {
                         Text("\(count) " + (loc.currentLanguage == .chinese ? "个任务可运行" : "tasks available"))
                             .font(.system(size: 12))
@@ -663,11 +663,12 @@ struct SmartCleanerView: View {
         case .completed:
             // Run Orb (Updated text)
             Button(action: {
-                if service.performanceApps.contains(where: { $0.isSelected }) {
-                    showRunningAppsSafetyAlert = true
-                } else {
+                // ⚠️ 暂时禁用 performanceApps 检查
+                // if service.performanceApps.contains(where: { $0.isSelected }) {
+                //     showRunningAppsSafetyAlert = true
+                // } else {
                     showDeleteConfirmation = true
-                }
+                // }
             }) {
                 ZStack {
                     Circle()

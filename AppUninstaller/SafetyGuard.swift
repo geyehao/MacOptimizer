@@ -101,6 +101,18 @@ class SafetyGuard {
         "/private/var/db",
         "/private/var/root",
         
+        // ⚠️ 严重 BUG 修复：保护用户媒体目录，防止误删视频/音乐/图片等
+        "~/Movies",
+        "~/Music",
+        "~/Pictures",
+        "~/Documents",
+        "~/Desktop",
+        "~/Downloads",
+        
+        // ⚠️ 严重 BUG 修复：保护应用程序目录，防止破坏应用
+        "/Applications",
+        "~/Applications",
+        
         // 用户关键数据
         "~/Library/Keychains",
         "~/Library/KeyboardServices",

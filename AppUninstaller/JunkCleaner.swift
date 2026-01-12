@@ -496,6 +496,14 @@ class JunkCleaner: ObservableObject {
                     }
 
                     if type == .languageFiles {
+                         // ⚠️ 严重 BUG 修复：禁用此功能
+                         // 删除应用的 .lproj 文件会破坏 macOS 代码签名
+                         // 导致应用报告"已损坏"无法启动
+                         print("[JunkCleaner] languageFiles DISABLED for safety - deleting .lproj breaks app signatures")
+                         return ([], false)
+                         
+                         // 原始代码已禁用：
+                         /*
                          // Adapting logic from SmartCleanerService
                          // 1. Get preferred languages
                          var keepLanguages: Set<String> = ["Base", "en", "English"]
@@ -551,9 +559,6 @@ class JunkCleaner: ObservableObject {
                                      }
                                      
                                      if !shouldKeep {
-                                         // Don't use calculateSizeAsync here as it calls withTaskGroup which is tricky inside another concurrent block? 
-                                         // check calculateSizeAsync implementation. It uses TaskGroup.
-                                         // Nesting TaskGroups is fine.
                                          let size = await self.calculateSizeAsync(at: itemURL)
                                          if size > 0 {
                                              items.append(JunkItem(type: type, path: itemURL, size: size))
@@ -563,6 +568,7 @@ class JunkCleaner: ObservableObject {
                              }
                          }
                          return (items, false)
+                         */
                     }
                     
                     if type == .appCache {
