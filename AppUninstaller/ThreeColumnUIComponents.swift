@@ -14,32 +14,36 @@ struct TriStateCheckbox: View {
     @State private var isHovering: Bool = false
     
     var body: some View {
-        Button(action: action) {
-            ZStack {
+        ZStack {
+            Circle()
+                .stroke(borderColor, lineWidth: 1.5)
+                .frame(width: 20, height: 20)
+            
+            if state != .none {
                 Circle()
-                    .stroke(borderColor, lineWidth: 1.5)
+                    .fill(fillColor)
                     .frame(width: 20, height: 20)
                 
-                if state != .none {
-                    Circle()
-                        .fill(fillColor)
-                        .frame(width: 20, height: 20)
-                    
-                    if state == .all {
-                        Image(systemName: "checkmark")
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundColor(.white)
-                    } else {
-                        Image(systemName: "minus")
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundColor(.white)
-                    }
+                if state == .all {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(.white)
+                } else {
+                    Image(systemName: "minus")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(.white)
                 }
             }
-            .opacity(isHovering ? 0.8 : 1.0)
-            .scaleEffect(isHovering ? 1.05 : 1.0)
         }
-        .buttonStyle(.plain)
+        .frame(width: 20, height: 20)
+        .opacity(isHovering ? 0.8 : 1.0)
+        .scaleEffect(isHovering ? 1.05 : 1.0)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            Task { @MainActor in
+                action()
+            }
+        }
         .onHover { isHovering = $0 }
     }
     

@@ -83,6 +83,11 @@ class DeepCleanScanner: ObservableObject {
     @Published var cleaningProgress: Double = 0.0
     @Published var currentCleaningItem: String = ""
     
+    // 清理状态跟踪
+    @Published var cleaningCurrentCategory: DeepCleanCategory? = nil
+    @Published var cleanedCategories: Set<DeepCleanCategory> = []
+    @Published var cleaningDescription: String = ""
+    
     // 选中的大小
     var selectedSize: Int64 {
         items.filter { $0.isSelected }.reduce(0) { $0 + $1.size }
@@ -186,16 +191,23 @@ class DeepCleanScanner: ObservableObject {
         }
     }
     
+    func sizeFor(category: DeepCleanCategory) -> Int64 {
+        return items.filter { $0.category == category && $0.isSelected }.reduce(0) { $0 + $1.size }
+    }
+    
     func stopScan() {
         scanTask?.cancel()
         isScanning = false
     }
     
     func cleanSelected() async -> (count: Int, size: Int64) {
+        print("[DeepClean] 🧹 开始清理...")
+        
         await MainActor.run {
             self.isCleaning = true
             self.scanStatus = LocalizationManager.shared.currentLanguage == .chinese ? "准备清理..." : "Preparing Cleanup..."
             self.cleaningProgress = 0
+            self.cleanedCategories = []
         }
         
         let categoriesToClean: [DeepCleanCategory] = [.junkFiles, .systemLogs, .systemCaches, .appResiduals, .largeFiles]
@@ -206,16 +218,33 @@ class DeepCleanScanner: ObservableObject {
         let categoriesWithSelection = categoriesToClean.filter { cat in
             items.contains { $0.category == cat && $0.isSelected }
         }
+        
+        print("[DeepClean] 📋 找到 \(categoriesWithSelection.count) 个需要清理的分类")
+        
+        // 如果没有选中任何项目，直接返回
+        guard !categoriesWithSelection.isEmpty else {
+            print("[DeepClean] ⚠️ 没有选中任何项目，直接返回")
+            await MainActor.run {
+                self.isCleaning = false
+            }
+            return (0, 0)
+        }
+        
         let totalCategories = Double(categoriesWithSelection.count)
         
         for (index, category) in categoriesWithSelection.enumerated() {
+            print("[DeepClean] 🔄 开始清理分类: \(category.localizedName)")
+            
              await MainActor.run {
+                self.cleaningCurrentCategory = category
                 self.currentCategory = category
                 self.scanStatus = LocalizationManager.shared.currentLanguage == .chinese ? 
                     "正在清理 \(category.localizedName)..." : "Cleaning \(category.localizedName)..."
+                self.cleaningDescription = LocalizationManager.shared.currentLanguage == .chinese ? "正在清理..." : "Cleaning..."
             }
             
             let categoryItems = items.filter { $0.category == category && $0.isSelected }
+            print("[DeepClean] 📦 该分类有 \(categoryItems.count) 个项目需要清理")
             var categoryFailures: [URL] = []
             
             for item in categoryItems {
@@ -245,26 +274,33 @@ class DeepCleanScanner: ObservableObject {
                     categoryItems.contains(where: { $0.id == item.id }) && !capturedFailures.contains(item.url)
                 }
                 
+                // Mark category as cleaned
+                self.cleanedCategories.insert(category)
+                
                 // Animate Progress
                 withAnimation(.linear(duration: 0.3)) {
                     self.cleaningProgress = Double(index + 1) / totalCategories
                 }
             }
             
-            // Small delay for visual pacing
-            try? await Task.sleep(nanoseconds: 300_000_000) // 0.3s
+            // Small delay for visual pacing (reduced from 300ms to 100ms)
+            try? await Task.sleep(nanoseconds: 100_000_000) // 0.1s
         }
         
         let finalDeletedSize = totalDeletedSize
         let finalDeletedCount = totalDeletedCount
+        
+        print("[DeepClean] ✅ 清理完成！共清理 \(finalDeletedCount) 个文件，释放 \(ByteCountFormatter.string(fromByteCount: finalDeletedSize, countStyle: .file))")
         
         await MainActor.run { [finalDeletedSize] in
             self.cleanedSize = finalDeletedSize
             self.totalSize -= finalDeletedSize
             self.isCleaning = false
             self.cleaningProgress = 1.0
+            self.cleaningCurrentCategory = nil
             self.currentCleaningItem = ""
             self.scanStatus = LocalizationManager.shared.currentLanguage == .chinese ? "清理完成" : "Cleanup Complete"
+            print("[DeepClean] 📢 已将 isCleaning 设置为 false，应该触发页面切换")
         }
         
         return (finalDeletedCount, finalDeletedSize)
@@ -278,6 +314,9 @@ class DeepCleanScanner: ObservableObject {
         scanStatus = ""
         currentScanningUrl = ""
         completedCategories = []
+        cleaningCurrentCategory = nil
+        cleanedCategories = []
+        cleaningDescription = ""
     }
     
     // MARK: - Helper Methods
@@ -303,9 +342,6 @@ class DeepCleanScanner: ObservableObject {
                 "Library",          // Contains App Data/Databases - Unsafe to delete single files
                 "Applications",     // Apps themselves
                 ".Trash",           // Already in Trash
-                "Desktop",          // Optional: Some users keep important stuff on Desktop, but we'll scan it. Wait, if I include it in Roots, I scan it. If I exclude it here, I skip it. 
-                                    // I want to scan EVERYTHING in Home except Library/Apps.
-                                    // So I should NOT exclude Desktop/Documents.
                 ".vol", ".Db",      // System mounts
                 "Music/Music Library", // Protect Music Library DB
                 "Pictures/Photos Library.photoslibrary" // Protect Photos DB
@@ -490,11 +526,249 @@ class DeepCleanScanner: ObservableObject {
     }
     
     private func scanResiduals() async -> [DeepCleanItem] {
-        // ⚠️ SAFETY: Disabled due to risk of damaging installed applications.
-        // This feature incorrectly flagged Chrome and other apps as "residuals".
-        // TODO: Implement proper app detection that compares bundle IDs, not folder names.
-        print("[DeepClean] scanResiduals DISABLED for safety")
-        return []
+        print("[DeepClean] 🔍 开始扫描应用残留...")
+        
+        let home = fileManager.homeDirectoryForCurrentUser
+        var items: [DeepCleanItem] = []
+        
+        // 1. 获取所有已安装应用的信息
+        let installedApps = await getInstalledAppParams()
+        print("[DeepClean] 📱 找到 \(installedApps.count) 个已安装应用")
+        
+        // 2. 扫描 Application Support (应用数据)
+        let appSupport = home.appendingPathComponent("Library/Application Support")
+        if fileManager.fileExists(atPath: appSupport.path) {
+            updateScanningUrl(appSupport.path)
+            if let contents = try? fileManager.contentsOfDirectory(at: appSupport, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) {
+                for folder in contents {
+                    // Update UI occasionally
+                    if Int.random(in: 0...10) == 0 { await MainActor.run { self.updateScanningUrl(folder.path) } }
+                    
+                    let folderName = folder.lastPathComponent
+                    
+                    // ⚠️ 关键：使用 isOrphanedFolder 判断是否为残留
+                    if isOrphanedFolder(name: folderName, installedApps: installedApps) {
+                        // ⚠️ 再次使用 SafetyGuard 验证
+                        if SafetyGuard.shared.isSafeToDelete(folder) {
+                            let size = await calculateSizeAsync(at: folder)
+                            if size > 100_000 { // 只添加大于100KB的残留
+                                items.append(DeepCleanItem(
+                                    url: folder,
+                                    name: folderName,
+                                    size: size,
+                                    category: .appResiduals
+                                ))
+                                print("[DeepClean] 🗑️ 发现残留: \(folderName)")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // 3. 扫描 Preferences (偏好设置)
+        // ⚠️ 注意：Preferences 包含大量系统服务配置，需要极其谨慎
+        // 为了安全，暂时禁用 Preferences 扫描，避免误删系统配置
+        // let prefs = home.appendingPathComponent("Library/Preferences")
+        // print("[DeepClean] ⚠️ Preferences 扫描已禁用，以防误删系统配置")
+        
+        // 如果未来要启用，需要更严格的白名单
+        /*
+        if fileManager.fileExists(atPath: prefs.path) {
+            updateScanningUrl(prefs.path)
+            if let contents = try? fileManager.contentsOfDirectory(at: prefs, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) {
+                for file in contents {
+                    guard file.pathExtension == "plist" else { continue }
+                    
+                    let bundleId = file.deletingPathExtension().lastPathComponent
+                    
+                    // 额外的安全检查
+                    if isOrphanedFile(bundleId: bundleId, installedApps: installedApps) {
+                        if SafetyGuard.shared.isSafeToDelete(file) {
+                            // 只添加确定是第三方应用的 plist
+                            if bundleId.contains(".") && 
+                               !bundleId.hasPrefix("com.apple.") &&
+                               !bundleId.hasPrefix("apple") {
+                                if let attrs = try? fileManager.attributesOfItem(atPath: file.path),
+                                   let size = attrs[.size] as? Int64, size > 100_000 { // 只添加 >100KB 的
+                                    items.append(DeepCleanItem(
+                                        url: file,
+                                        name: file.lastPathComponent,
+                                        size: size,
+                                        category: .appResiduals
+                                    ))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        */
+        
+        // 4. 扫描 Containers (沙盒容器)
+        let containers = home.appendingPathComponent("Library/Containers")
+        if fileManager.fileExists(atPath: containers.path) {
+            updateScanningUrl(containers.path)
+            if let contents = try? fileManager.contentsOfDirectory(at: containers, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) {
+                for folder in contents {
+                    // Update UI occasionally
+                    if Int.random(in: 0...10) == 0 { await MainActor.run { self.updateScanningUrl(folder.path) } }
+                    
+                    let bundleId = folder.lastPathComponent
+                    
+                    if isOrphanedFile(bundleId: bundleId, installedApps: installedApps) {
+                        if SafetyGuard.shared.isSafeToDelete(folder) {
+                            let size = await calculateSizeAsync(at: folder)
+                            if size > 100_000 { // 只添加大于100KB的残留
+                                items.append(DeepCleanItem(
+                                    url: folder,
+                                    name: bundleId,
+                                    size: size,
+                                    category: .appResiduals
+                                ))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        print("[DeepClean] ✅ 扫描完成，找到 \(items.count) 个应用残留")
+        return items
+    }
+    
+    // MARK: - 残留检测辅助方法
+    
+    /// 判断文件/文件夹名称是否为已卸载应用的残留
+    private func isOrphanedFolder(name: String, installedApps: Set<String>) -> Bool {
+        let lowerName = name.lowercased()
+        
+        // 1. 跳过系统目录和Apple服务
+        let systemDirs = [
+            // 核心系统目录
+            "cloudkit", "geoservices", "familycircle", "knowledge", "metadata",
+            "tmp", "t", "caches", "cache", "logs", "preferences", "temp",
+            "cookies", "webkit", "httpstorages", "containers", "group containers",
+            "databases", "keychains", "accounts", "mail", "calendars", "contacts",
+            
+            // Apple 应用和服务
+            "safari", "finder", "dock", "spotlight", "siri",
+            "passkit", "wallet",  // ⚠️ 钱包和密码服务
+            "appstore", "facetime", "messages", "photos", "music", "tv",
+            "icloud", "cloudphotosd", "cloudpaird",
+            
+            // 系统守护进程和代理
+            "accountsd", "appleaccount", "identityservicesd",
+            "itunesstored", "commerce", "storekit",
+            "softwareupdate", "diagnostics"
+        ]
+        if systemDirs.contains(lowerName) { return false }
+        
+        // 2. 跳过以 . 开头的隐藏目录
+        if name.hasPrefix(".") { return false }
+        
+        // 3. 跳过 Apple 系统目录
+        if lowerName.hasPrefix("com.apple.") { return false }
+        if lowerName.hasPrefix("apple") { return false }
+        
+        // 4. 检查是否匹配已安装应用
+        // 精确匹配
+        if installedApps.contains(lowerName) { return false }
+        
+        // 模糊匹配：检查是否包含已安装应用的名称
+        for appId in installedApps {
+            // 双向匹配
+            if lowerName.contains(appId) || appId.contains(lowerName) {
+                // 额外检查：避免误匹配过短的字符串
+                if min(lowerName.count, appId.count) >= 5 {
+                    return false
+                }
+            }
+        }
+        
+        // 5. 检查 Bundle ID 格式的组件
+        if lowerName.contains(".") {
+            let components = lowerName.components(separatedBy: ".")
+            for component in components where component.count >= 4 {
+                for appId in installedApps {
+                    if appId.contains(component) {
+                        return false
+                    }
+                }
+            }
+        }
+        
+        // 通过所有检查，确认是残留
+        return true
+    }
+    
+    /// 判断 Bundle ID 是否为已卸载应用的残留
+    private func isOrphanedFile(bundleId: String, installedApps: Set<String>) -> Bool {
+        let lowerBundleId = bundleId.lowercased()
+        
+        // 1. 跳过以 . 开头的系统文件（如 .GlobalPreferences.plist）
+        if bundleId.hasPrefix(".") { return false }
+        
+        // 2. 跳过所有 Apple 系统服务
+        if lowerBundleId.hasPrefix("com.apple.") { return false }
+        if lowerBundleId.hasPrefix("apple") { return false }
+        
+        // 3. 🛡️ 扩展的系统服务白名单（关键系统组件）
+        let systemBundleIds = [
+            // 核心系统服务
+            "loginwindow", "finder", "dock", "systemuiserver", "controlcenter",
+            "notificationcenter", "launchservicesd", "cfprefsd",
+            
+            // 系统守护进程
+            "contextstoreagent", "contextstore",  // 上下文存储
+            "pbs", "pasteboard",                   // 剪贴板服务
+            "familycircled", "familycircle",       // 家庭共享
+            "sharedfilelistd", "sharedfilelist",   // 共享文件列表
+            "diagnostics_agent", "diagnostics",    // 系统诊断
+            
+            // Apple 账户和认证
+            "passkit", "wallet", "passd",          // 钱包和密码服务 ⚠️ 重要
+            "accountsd", "accounts",               // 账户管理
+            "identityservicesd", "appleaccount",   // 身份验证
+            
+            // iCloud 和同步服务
+            "cloudd", "icloud", "bird", "syncdefaultsd",
+            "cloudphotosd", "cloudpaird", "cloudkitd",
+            
+            // App Store 和下载
+            "itunesstored", "commerce", "storekit", "appstoreupdates",
+            "softwareupdate", "softwareupdate_notify_agent",
+            
+            // 媒体和多媒体服务
+            "mediaremoted", "coremedia", "avfoundation",
+            "applemediaservices", "applemedialibrary",
+            
+            // 网络和安全
+            "networkd", "securityd", "trustd", "keybagd",
+            
+            // 其他关键服务
+            "coreduetd", "dasd", "rapportd", "askpermissiond"
+        ]
+        if systemBundleIds.contains(lowerBundleId) { return false }
+        
+        // 4. 精确匹配 Bundle ID
+        if installedApps.contains(bundleId) || installedApps.contains(lowerBundleId) {
+            return false
+        }
+        
+        // 5. 模糊匹配：检查 Bundle ID 的各个组件
+        let components = bundleId.components(separatedBy: ".")
+        for component in components where component.count > 3 {
+            for appId in installedApps {
+                if appId.contains(component) || component.contains(appId) {
+                    return false
+                }
+            }
+        }
+        
+        // 通过所有检查，确认是残留
+        return true
     }
     
     private func scanJunk() async -> [DeepCleanItem] {
@@ -561,26 +835,89 @@ class DeepCleanScanner: ObservableObject {
             }
         }
         
-        // 5. Temporary Downloads (dmg, pkg, zip)
-        let downloads = home.appendingPathComponent("Downloads")
-        if let contents = try? fileManager.contentsOfDirectory(at: downloads, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) {
-             for file in contents {
-                 // Update UI occasionally
-                 if Int.random(in: 0...10) == 0 { await MainActor.run { self.updateScanningUrl(file.path) } }
-                 
-                 let ext = file.pathExtension.lowercased()
-                 if ["dmg", "pkg", "zip", "iso"].contains(ext) {
-                     let size = (try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
-                     if size > 0 {
-                         items.append(DeepCleanItem(
-                             url: file,
-                             name: file.lastPathComponent,
-                             size: Int64(size),
-                             category: .junkFiles
-                         ))
-                     }
-                 }
-             }
+        // 5. 应用缓存 (App Caches) - 扫描 ~/Library/Caches 中的应用缓存
+        // ⚠️ 注意：Caches 目录包含大量系统和应用缓存
+        // 为了安全，只扫描明确知道是第三方应用的缓存
+        let cachesDir = home.appendingPathComponent("Library/Caches")
+        if fileManager.fileExists(atPath: cachesDir.path) {
+            updateScanningUrl(cachesDir.path)
+            if let cacheContents = try? fileManager.contentsOfDirectory(at: cachesDir, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) {
+                for cacheFolder in cacheContents {
+                    // Update UI occasionally
+                    if Int.random(in: 0...5) == 0 { await MainActor.run { self.updateScanningUrl(cacheFolder.path) } }
+                    
+                    let folderName = cacheFolder.lastPathComponent.lowercased()
+                    
+                    // 🛡️ 第一层：明确跳过所有 Apple 系统缓存
+                    if folderName.hasPrefix("com.apple.") {
+                        continue  // 绝不扫描 Apple 系统缓存
+                    }
+                    
+                    // 🛡️ 第二层：跳过当前正在运行的应用（我们自己的应用）
+                    if folderName == "com.tool.appuninstaller" {
+                        continue  // 不清理自己的缓存
+                    }
+                    
+                    // 🛡️ 第三层：跳过已知的Apple系统服务缓存
+                    let appleSystemServices = [
+                        "passkit",  // Apple Wallet/密码服务
+                        "cloudkit", "clouddocs", "cloudphotosd",
+                        "familycircle", "familycircled",
+                        "sqlite", "metadata", "applemedialibrary",
+                        "applemediaservices", "itunesstored",
+                        "commerce", "storekit", "appleaccount",
+                        "accountsd", "identityservicesd",
+                        "com.crashlytics", "diagnostics",
+                        "appstoreupdates", "softwareupdate"
+                    ]
+                    if appleSystemServices.contains(folderName) {
+                        continue  // 跳过Apple系统服务
+                    }
+                    
+                    // 🛡️ 第四层：跳过所有正在运行的应用的缓存
+                    let runningBundleIds = NSWorkspace.shared.runningApplications.compactMap { $0.bundleIdentifier?.lowercased() }
+                    if runningBundleIds.contains(folderName) {
+                        continue  // 不清理正在运行的应用的缓存
+                    }
+                    
+                    // 🛡️ 第五层：SafetyGuard 最终检查
+                    if SafetyGuard.shared.isSafeToDelete(cacheFolder) {
+                        let size = await calculateSizeAsync(at: cacheFolder)
+                        if size > 100_000 { // 只添加大于100KB的缓存
+                            items.append(DeepCleanItem(
+                                url: cacheFolder,
+                                name: cacheFolder.lastPathComponent,
+                                size: size,
+                                category: .junkFiles
+                            ))
+                        }
+                    }
+                }
+            }
+        }
+        
+        // 6. 浏览器缓存 (Browser Caches)
+        let browserCaches: [(name: String, path: String)] = [
+            ("Safari 缓存", "Library/Caches/com.apple.Safari"),
+            ("Chrome 缓存", "Library/Caches/Google/Chrome"),
+            ("Firefox 缓存", "Library/Caches/Firefox"),
+            ("Edge 缓存", "Library/Caches/com.microsoft.Edge")
+        ]
+        
+        for (name, relativePath) in browserCaches {
+            let cachePath = home.appendingPathComponent(relativePath)
+            if fileManager.fileExists(atPath: cachePath.path) {
+                updateScanningUrl(cachePath.path)
+                let size = await calculateSizeAsync(at: cachePath)
+                if size > 0 {
+                    items.append(DeepCleanItem(
+                        url: cachePath,
+                        name: LocalizationManager.shared.currentLanguage == .chinese ? name : name.replacingOccurrences(of: " 缓存", with: " Cache"),
+                        size: size,
+                        category: .junkFiles
+                    ))
+                }
+            }
         }
         
         return items
@@ -649,11 +986,18 @@ class DeepCleanScanner: ObservableObject {
         
         // 4. 扩展的系统安全名单
         let systemSafelist = [
+            // Apple 系统服务
             "com.apple", "cloudkit", "safari", "mail", "messages", "photos",
             "finder", "dock", "spotlight", "siri", "xcode", "instruments",
+            "passkit", "wallet", "appstore", "facetime", "imessage",
+            "familycircle", "familysharing", "icloud", "appleaccount",
+            "findmy", "fmip", "healthkit", "homekit", "newsstand",
+            "itunesstored", "commerce", "storekit", "applemediaservices",
+            // 第三方常用应用
             "google", "chrome", "microsoft", "firefox", "adobe", "dropbox",
             "slack", "discord", "zoom", "telegram", "wechat", "qq", "tencent",
-            "jetbrains", "vscode", "homebrew", "npm", "python", "ruby", "java"
+            "jetbrains", "vscode", "homebrew", "npm", "python", "ruby", "java",
+            "todesk", "teamviewer", "anydesk"  // 远程桌面工具
         ]
         for safe in systemSafelist {
             params.insert(safe)
@@ -695,6 +1039,17 @@ class DeepCleanScanner: ObservableObject {
         if let idx = items.firstIndex(where: { $0.id == item.id }) {
             items[idx].isSelected.toggle()
         }
+        objectWillChange.send()
+    }
+    
+    func toggleCategorySelection(_ category: DeepCleanCategory, to newState: Bool) {
+        let categoryItems = items.filter { $0.category == category }
+        for item in categoryItems {
+            if let idx = items.firstIndex(where: { $0.id == item.id }) {
+                items[idx].isSelected = newState
+            }
+        }
+        objectWillChange.send()
     }
     
     func selectItems(in category: DeepCleanCategory) {
