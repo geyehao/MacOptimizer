@@ -61,6 +61,7 @@ enum MainCategory: String, CaseIterable, Identifiable {
         switch self {
         case .systemJunk:
             return [.userCache, .systemCache, .oldUpdates, 
+                    .trash, // Add Trash here
                     .systemLogs, .userLogs]
         case .duplicates:
             return [.duplicates]
@@ -87,6 +88,7 @@ enum CleanerCategory: String, CaseIterable {
     case systemCache = "系统缓存文件"
     case oldUpdates = "下载与更新"
     case userCache = "用户缓存文件"
+    case trash = "废纸篓" // Add Trash case
     // languageFiles 已删除 - 删除 .lproj 会破坏应用签名
     case systemLogs = "系统日志文件"
     case userLogs = "用户日志文件"
@@ -110,6 +112,7 @@ enum CleanerCategory: String, CaseIterable {
         case .systemCache: return "internaldrive"
         case .oldUpdates: return "arrow.down.circle"
         case .userCache: return "person.crop.circle"
+        case .trash: return "trash" // Trash icon
         case .systemLogs: return "doc.text"
         case .userLogs: return "person.text.rectangle"
         case .duplicates: return "doc.on.doc"
@@ -129,6 +132,7 @@ enum CleanerCategory: String, CaseIterable {
         case .systemCache: return "System Cache"
         case .oldUpdates: return "Downloads & Updates"
         case .userCache: return "User Cache"
+        case .trash: return "Trash"
         case .systemLogs: return "System Logs"
         case .userLogs: return "User Logs"
         case .duplicates: return "Duplicates"
@@ -148,6 +152,7 @@ enum CleanerCategory: String, CaseIterable {
         case .systemCache: return .blue
         case .oldUpdates: return .orange
         case .userCache: return .cyan
+        case .trash: return .gray
         case .systemLogs: return .green
         case .userLogs: return .teal
         case .duplicates: return .blue
@@ -164,7 +169,7 @@ enum CleanerCategory: String, CaseIterable {
     /// 是否是系统垃圾子类别
     var isSystemJunkSubcategory: Bool {
         switch self {
-        case .systemCache, .oldUpdates, .userCache, .systemLogs, .userLogs:
+        case .systemCache, .oldUpdates, .userCache, .trash, .systemLogs, .userLogs:
             return true
         default:
             return false
@@ -282,6 +287,7 @@ class SmartCleanerService: ObservableObject {
     @Published var systemCacheFiles: [CleanerFileItem] = []
     @Published var oldUpdateFiles: [CleanerFileItem] = []
     @Published var userCacheFiles: [CleanerFileItem] = []
+    @Published var trashFiles: [CleanerFileItem] = [] // New property
     // languageFiles 已删除 - 会破坏应用签名
     @Published var systemLogFiles: [CleanerFileItem] = []
     @Published var userLogFiles: [CleanerFileItem] = []
@@ -343,11 +349,12 @@ class SmartCleanerService: ObservableObject {
         let systemCache = systemCacheFiles.filter { $0.isSelected }.reduce(0) { $0 + $1.size }
         let oldUpdates = oldUpdateFiles.filter { $0.isSelected }.reduce(0) { $0 + $1.size }
         let userCache = userCacheFiles.filter { $0.isSelected }.reduce(0) { $0 + $1.size }
+        let trash = trashFiles.filter { $0.isSelected }.reduce(0) { $0 + $1.size }
         let groupedCache = appCacheGroups.reduce(0) { $0 + $1.selectedSize }
         let sysLogs = systemLogFiles.filter { $0.isSelected }.reduce(0) { $0 + $1.size }
         let userLogs = userLogFiles.filter { $0.isSelected }.reduce(0) { $0 + $1.size }
         
-        return systemCache + oldUpdates + userCache + groupedCache + sysLogs + userLogs
+        return systemCache + oldUpdates + userCache + trash + groupedCache + sysLogs + userLogs
     }
     
     var virusTotalSize: Int64 {
@@ -367,6 +374,8 @@ class SmartCleanerService: ObservableObject {
             let looseFilesSize = userCacheFiles.filter { $0.isSelected }.reduce(0) { $0 + $1.size }
             let groupedFilesSize = appCacheGroups.reduce(0) { $0 + $1.selectedSize } // Use selectedSize property
             return looseFilesSize + groupedFilesSize
+        case .trash:
+            return trashFiles.filter { $0.isSelected }.reduce(0) { $0 + $1.size }
         case .systemLogs:
             return systemLogFiles.filter { $0.isSelected }.reduce(0) { $0 + $1.size }
         case .userLogs:
@@ -406,6 +415,8 @@ class SmartCleanerService: ObservableObject {
             return oldUpdateFiles.count
         case .userCache:
             return userCacheFiles.count + appCacheGroups.reduce(0) { $0 + $1.files.count }
+        case .trash:
+            return trashFiles.count
         case .systemLogs:
             return systemLogFiles.count
         case .userLogs:
@@ -457,6 +468,10 @@ class SmartCleanerService: ObservableObject {
             
             // 关键修复: 手动触发 Service 的更新通知，确保 Summary View 刷新统计数据
             self.objectWillChange.send()
+        case .trash:
+            if let idx = trashFiles.firstIndex(where: { $0.url == file.url }) {
+                trashFiles[idx].isSelected.toggle()
+            }
         case .systemLogs:
             if let idx = systemLogFiles.firstIndex(where: { $0.url == file.url }) {
                 systemLogFiles[idx].isSelected.toggle()
@@ -539,6 +554,8 @@ class SmartCleanerService: ObservableObject {
             }
             // 移除空组
             appCacheGroups.removeAll { $0.files.isEmpty }
+        case .trash:
+            trashFiles.removeAll { $0.url == file.url }
         case .systemLogs:
             systemLogFiles.removeAll { $0.url == file.url }
         case .userLogs:
@@ -559,6 +576,7 @@ class SmartCleanerService: ObservableObject {
     func filesFor(category: CleanerCategory) -> [CleanerFileItem] {
         switch category {
         case .userCache: return userCacheFiles + appCacheGroups.flatMap { $0.files }
+        case .trash: return trashFiles
         case .systemCache: return systemCacheFiles
         case .oldUpdates: return oldUpdateFiles
         case .systemLogs: return systemLogFiles
@@ -737,6 +755,10 @@ class SmartCleanerService: ObservableObject {
                     appCacheGroups[gIdx].files[fIdx].isSelected = targetState
                 }
             }
+        case .trash:
+            for i in trashFiles.indices {
+                trashFiles[i].isSelected = targetState
+            }
         case .systemLogs:
             for i in systemLogFiles.indices {
                 systemLogFiles[i].isSelected = targetState
@@ -796,6 +818,7 @@ class SmartCleanerService: ObservableObject {
             systemCacheFiles = []
             oldUpdateFiles = []
             userCacheFiles = []
+            trashFiles = []
             systemLogFiles = []
             userLogFiles = []
         }
@@ -820,6 +843,11 @@ class SmartCleanerService: ObservableObject {
         let usrCache = await scanUserCache()
         await MainActor.run { userCacheFiles = usrCache }
         currentStep += 1
+        
+        // 3.5 扫描废纸篓
+        await updateProgress(step: currentStep, total: totalSteps, message: "正在扫描废纸篓...")
+        let trash = await scanTrash()
+        await MainActor.run { trashFiles = trash }
         
         // 4. 扫描语言文件 - ⚠️ 已禁用(用户要求只清理缓存和日志)
         // await updateProgress(step: currentStep, total: totalSteps, message: "正在扫描语言文件...")
@@ -1313,8 +1341,8 @@ class SmartCleanerService: ObservableObject {
                         isDirectory: true
                     )
                     
-                    // 不再使用 addItem 添加到应用分组，直接作为散项处理
-                    items.append(fileItem)
+                    // 使用 addItem 进行分组
+                    addItem(fileItem, bundleId)
                 }
             }
         }
@@ -1344,7 +1372,7 @@ class SmartCleanerService: ObservableObject {
                             size: size,
                             groupId: "userCache"
                         )
-                        items.append(fileItem)
+                        addItem(fileItem, bundleId)
                     }
                 }
                 
@@ -1359,7 +1387,7 @@ class SmartCleanerService: ObservableObject {
                             size: size,
                             groupId: "userCache"
                         )
-                        items.append(fileItem)
+                        addItem(fileItem, bundleId)
                     }
                 }
             }
@@ -1387,7 +1415,7 @@ class SmartCleanerService: ObservableObject {
                         size: size,
                         groupId: "userCache"
                     )
-                    items.append(fileItem)
+                    addItem(fileItem, bundleId)
                 }
             }
         }
@@ -1415,7 +1443,7 @@ class SmartCleanerService: ObservableObject {
                                 size: size,
                                 groupId: "userCache"
                             )
-                            items.append(fileItem)
+                            addItem(fileItem, appName)
                         }
                     }
                 }
@@ -1481,29 +1509,23 @@ class SmartCleanerService: ObservableObject {
             for logURL in logs {
                 let size = calculateSize(at: logURL)
                 if size > 50 * 1024 {
-                    items.append(CleanerFileItem(
+                    let fileItem = CleanerFileItem(
                         url: logURL,
                         name: "\(logURL.lastPathComponent) 日志",
                         size: size,
                         groupId: "userCache"
-                    ))
+                    )
+                    
+                    // 尝试将日志归类到应用
+                    let logName = logURL.lastPathComponent
+                    // 移除可能的后缀如 .log, -helper 等尝试匹配
+                    let possibleAppId = logName.replacingOccurrences(of: ".log", with: "")
+                    addItem(fileItem, possibleAppId)
                 }
             }
         }
         
-        // 10. 扫描 ~/.Trash (废纸篓)
-        let trashURL = home.appendingPathComponent(".Trash")
-        if fileManager.fileExists(atPath: trashURL.path) {
-            let size = calculateSize(at: trashURL)
-            if size > 100 * 1024 {
-                items.append(CleanerFileItem(
-                    url: trashURL,
-                    name: "🗑️ 废纸篓",
-                    size: size,
-                    groupId: "userCache"
-                ))
-            }
-        }
+        // 10. 扫描 ~/.Trash (废纸篓) - 已移动到 scanTrash()
         
         // 11. 开发者工具缓存 (IDEA, VSCode, Cursor, Navicat 等)
         let developerPaths: [(name: String, path: String, appIdentifier: String)] = [
@@ -1554,6 +1576,26 @@ class SmartCleanerService: ObservableObject {
         }
         
         return items.sorted { $0.size > $1.size }
+    }
+    
+    // MARK: - 废纸篓扫描
+    private func scanTrash() async -> [CleanerFileItem] {
+        var items: [CleanerFileItem] = []
+        let home = fileManager.homeDirectoryForCurrentUser
+        let trashURL = home.appendingPathComponent(".Trash")
+        
+        if fileManager.fileExists(atPath: trashURL.path) {
+            let size = calculateSize(at: trashURL)
+            if size > 1024 { // > 1KB
+                items.append(CleanerFileItem(
+                    url: trashURL,
+                    name: "🗑️ 废纸篓",
+                    size: size,
+                    groupId: "trash"
+                ))
+            }
+        }
+        return items
     }
     
     // MARK: - 辅助方法：获取已安装应用信息（改进版）
@@ -2466,7 +2508,7 @@ class SmartCleanerService: ObservableObject {
             }
             await scanLargeFiles()
             
-        case .systemJunk, .systemCache, .oldUpdates, .userCache, .systemLogs, .userLogs, .virus, .appUpdates, .startupItems, .performanceApps:
+        case .systemJunk, .systemCache, .oldUpdates, .userCache, .trash, .systemLogs, .userLogs, .virus, .appUpdates, .startupItems, .performanceApps:
             // 系统垃圾及新类别使用统一清理或专用方法
             break
         }
@@ -2521,7 +2563,7 @@ class SmartCleanerService: ObservableObject {
             return localizationFiles.filter { $0.isSelected }.count
         case .largeFiles:
             return largeFiles.filter { $0.isSelected }.count
-        case .systemJunk, .systemCache, .oldUpdates, .userCache, .systemLogs, .userLogs:
+        case .systemJunk, .systemCache, .oldUpdates, .userCache, .trash, .systemLogs, .userLogs:
             return countFor(category: category)
         case .virus:
             return virusThreats.count
@@ -2548,7 +2590,7 @@ class SmartCleanerService: ObservableObject {
             return virusThreats.filter { $0.isSelected }.reduce(0) { $0 + $1.size }
         case .performanceApps:
             return performanceApps.filter { $0.isSelected }.reduce(0) { $0 + $1.memoryUsage }
-        case .systemJunk, .systemCache, .oldUpdates, .userCache, .systemLogs, .userLogs, .appUpdates, .startupItems:
+        case .systemJunk, .systemCache, .oldUpdates, .userCache, .trash, .systemLogs, .userLogs, .appUpdates, .startupItems:
             return sizeFor(category: category)
         }
     }
@@ -3152,7 +3194,7 @@ class SmartCleanerService: ObservableObject {
             for i in 0..<largeFiles.count {
                 largeFiles[i].isSelected = selected
             }
-        case .systemJunk, .systemCache, .oldUpdates, .userCache, .systemLogs, .userLogs, .appUpdates:
+        case .systemJunk, .systemCache, .oldUpdates, .userCache, .trash, .systemLogs, .userLogs, .appUpdates:
             // 系统垃圾类别暂不支持单独选择
             break
         case .virus:
@@ -3177,6 +3219,7 @@ class SmartCleanerService: ObservableObject {
         let userCacheSize = userCacheFiles.filter { $0.isSelected }.reduce(0) { $0 + $1.size }
         let systemCacheSize = systemCacheFiles.filter { $0.isSelected }.reduce(0) { $0 + $1.size }
         let oldUpdatesSize = oldUpdateFiles.filter { $0.isSelected }.reduce(0) { $0 + $1.size }
+        let trashSize = trashFiles.filter { $0.isSelected }.reduce(0) { $0 + $1.size }
         let systemLogsSize = systemLogFiles.filter { $0.isSelected }.reduce(0) { $0 + $1.size }
         let userLogsSize = userLogFiles.filter { $0.isSelected }.reduce(0) { $0 + $1.size }
         
@@ -3195,7 +3238,7 @@ class SmartCleanerService: ObservableObject {
         // 病毒威胁
         let virusSize = virusThreats.filter { $0.isSelected }.reduce(0) { $0 + $1.size }
         
-        return userCacheSize + systemCacheSize + oldUpdatesSize + 
+        return userCacheSize + systemCacheSize + oldUpdatesSize + trashSize +
                systemLogsSize + userLogsSize + 
                dupSize + photoSize + locSize + largeSize + virusSize
     }
@@ -3208,6 +3251,7 @@ class SmartCleanerService: ObservableObject {
         allFiles.append(contentsOf: userCacheFiles.filter { $0.isSelected })
         allFiles.append(contentsOf: systemCacheFiles.filter { $0.isSelected })
         allFiles.append(contentsOf: oldUpdateFiles.filter { $0.isSelected })
+        allFiles.append(contentsOf: trashFiles.filter { $0.isSelected })
         allFiles.append(contentsOf: systemLogFiles.filter { $0.isSelected })
         allFiles.append(contentsOf: userLogFiles.filter { $0.isSelected })
         

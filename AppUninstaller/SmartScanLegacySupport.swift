@@ -509,15 +509,12 @@ struct AllCategoriesDetailSheet: View {
                     ForEach(service.startupItems, id: \.id) { item in
                         HStack(spacing: 12) {
                             // 勾选框
-                            Button(action: {
+                            // 勾选框
+                            TriStateCheckbox(state: item.isSelected ? .all : .none) {
                                 item.isSelected.toggle()
                                 service.objectWillChange.send()
-                            }) {
-                                Image(systemName: item.isSelected ? "checkmark.circle.fill" : "circle")
-                                    .foregroundColor(item.isSelected ? .blue : .gray)
-                                    .font(.system(size: 20))
                             }
-                            .buttonStyle(.plain)
+                            .frame(width: 20, height: 20)
                             
                             Image(systemName: "power")
                                 .foregroundColor(.orange)
@@ -576,15 +573,12 @@ struct AllCategoriesDetailSheet: View {
                     ForEach(service.performanceApps) { app in
                         HStack(spacing: 12) {
                             // 勾选框
-                            Button(action: {
+                            // 勾选框
+                            TriStateCheckbox(state: app.isSelected ? .all : .none) {
                                 app.isSelected.toggle()
                                 service.objectWillChange.send()
-                            }) {
-                                Image(systemName: app.isSelected ? "checkmark.circle.fill" : "circle")
-                                    .foregroundColor(app.isSelected ? .blue : .gray)
-                                    .font(.system(size: 20))
                             }
-                            .buttonStyle(.plain)
+                            .frame(width: 20, height: 20)
                             
                             Image(nsImage: app.icon)
                                 .resizable()

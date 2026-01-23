@@ -48,7 +48,9 @@ struct TriStateCheckbox: View {
     }
     
     private var fillColor: Color {
-        state == .all ? Color(hex: "40C4FF") : Color.orange
+        // Design uses a bright cyan-blue. 
+        // Using a color close to the screenshot (approx #28C8FF or #40C4FF)
+        return Color(red: 40/255, green: 200/255, blue: 255/255) // Cyan-Blue
     }
     
     private var borderColor: Color {

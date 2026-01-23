@@ -305,9 +305,9 @@ struct BackgroundStyles {
     // 9. 智能清理 (紫靛色渐变 - 匹配设计图)
     static let smartClean = LinearGradient(
         stops: [
-            .init(color: Color(red: 0.40, green: 0.32, blue: 0.62), location: 0.0), // 浅紫向上
-            .init(color: Color(red: 0.18, green: 0.16, blue: 0.35), location: 0.7), // 深靛蓝
-            .init(color: Color(red: 0.12, green: 0.12, blue: 0.25), location: 1.0)  // 最深底部
+            .init(color: Color(red: 79/255, green: 65/255, blue: 89/255), location: 0.0),   // Top: #4F4159
+            .init(color: Color(red: 105/255, green: 87/255, blue: 144/255), location: 0.5), // Mid: #695790
+            .init(color: Color(red: 70/255, green: 71/255, blue: 124/255), location: 1.0)   // Bottom: #46477C
         ],
         startPoint: .top,
         endPoint: .bottom
@@ -371,8 +371,9 @@ struct BackgroundStyles {
     // 12. 智能扫描详情页背景 (柔和的紫靛色渐变 - 匹配设计图)
     static let smartScanSheet = LinearGradient(
         stops: [
-            .init(color: Color(red: 0.25, green: 0.20, blue: 0.45), location: 0.0), // 深紫
-            .init(color: Color(red: 0.15, green: 0.15, blue: 0.35), location: 1.0)  // 深靛
+            .init(color: Color(red: 79/255, green: 65/255, blue: 89/255), location: 0.0),
+            .init(color: Color(red: 105/255, green: 87/255, blue: 144/255), location: 0.5),
+            .init(color: Color(red: 70/255, green: 71/255, blue: 124/255), location: 1.0)
         ],
         startPoint: .top,
         endPoint: .bottom
