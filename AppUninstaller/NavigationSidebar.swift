@@ -243,10 +243,17 @@ struct SidebarMenuItem: View {
         Button(action: action) {
             HStack(spacing: 10) {
                 // 图标
-                Image(systemName: moduleIcon)
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(isSelected ? .white : .white.opacity(0.7))
-                    .frame(width: 20)
+                if isSelected || isHovering {
+                    Image(systemName: moduleIcon)
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(module.gradient)
+                        .frame(width: 20)
+                } else {
+                    Image(systemName: moduleIcon)
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(.white.opacity(0.7))
+                        .frame(width: 20)
+                }
                 
                 // 名称
                 Text(localizedName)
