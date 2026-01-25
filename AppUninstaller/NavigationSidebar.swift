@@ -164,7 +164,7 @@ struct NavigationSidebar: View {
                 }
                 
                 HStack(spacing: 6) {
-                    Text("v3.0.3")
+                    Text("v4.0.6")
                         .font(.system(size: 10))
                         .foregroundColor(.white.opacity(0.3))
                     Text("Pro Version")

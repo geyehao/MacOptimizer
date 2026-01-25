@@ -122,20 +122,17 @@ MacOptimizer is a system optimization tool designed specifically for macOS, feat
 
 ### System Requirements
 - **macOS 13.0 (Ventura)** or later
-- **Apple Silicon (M1/M2/M3)** or Intel (modify build parameters)
+- **Apple Silicon (M1/M2/M3/M4)** or Intel (modify build parameters)
 - **Command Line Tools** (Full Xcode not required)
 
-```
 
 ### Download DMG
 
 Download the latest release from [GitHub Releases](https://github.com/ddlmanus/MacOptimizer/releases):
-- **Apple Silicon (M1/M2/M3)**: `MacOptimizer_vX.X.X_AppleSilicon.dmg`
+- **Apple Silicon (M1/M2/M3/M4)**: `MacOptimizer_vX.X.X_AppleSilicon.dmg`
 - **Intel**: `MacOptimizer_vX.X.X_Intel.dmg`
 
 ### Build from Source
-
-```bash
 # 1. Clone repository
 git clone https://github.com/ddlmanus/MacOptimizer.git
 cd MacOptimizer
@@ -345,7 +342,7 @@ Mac优化大师是一款专为 macOS 设计的系统优化工具，采用现代�
 
 ### 系统要求
 - **macOS 13.0 (Ventura)** 或更高版本
-- **Apple Silicon (M1/M2/M3)** 或 Intel 芯片（需修改编译参数）
+- **Apple Silicon (M1/M2/M3/M4)** 或 Intel 芯片（需修改编译参数）
 - **Command Line Tools**（无需安装完整 Xcode）
 
 ### 通过 Homebrew 安装（推荐）
@@ -365,7 +362,7 @@ brew install --cask ./homebrew/macoptimizer.rb
 ### 下载 DMG
 
 从 [GitHub Releases](https://github.com/ddlmanus/MacOptimizer/releases) 下载最新版本：
-- **Apple Silicon (M1/M2/M3)**: `MacOptimizer_vX.X.X_AppleSilicon.dmg`
+- **Apple Silicon (M1/M2/M3/M4)**: `MacOptimizer_vX.X.X_AppleSilicon.dmg`
 - **Intel**: `MacOptimizer_vX.X.X_Intel.dmg`
 
 ### 从源码编译
