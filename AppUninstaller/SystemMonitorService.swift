@@ -18,8 +18,8 @@ class SystemMonitorService: ObservableObject {
     // High Memory Alert
     @Published var highMemoryApp: HighMemoryApp?
     @Published var showHighMemoryAlert: Bool = false
-    // Threshold set to 1GB for demonstration
-    private let memoryThresholdGB: Double = 1.0 
+    // Threshold set to 2GB as requested
+    private let memoryThresholdGB: Double = 2.0 
     private var ignoredPids: Set<pid_t> = []
     
     // 新增：定时提醒和永久忽略
@@ -223,6 +223,9 @@ class SystemMonitorService: ObservableObject {
     // ... add fetchUserProcesses() to updateStats ...
     
     init() {
+        // Disable high memory alert for the first 30 seconds after app launch
+        snoozedUntil = Date().addingTimeInterval(30)
+        
         loadIgnoredApps()
         startMonitoring()
     }
